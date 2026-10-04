@@ -42,7 +42,7 @@ export function generateTechnicalAnalysis(
         : isEss
         ? ['• **Network Topology:** Extended Service Set (ESS / Infrastructure Mode)\nStandard centralized wireless infrastructure where client stations associate to an Access Point.']
         : []),
-      '• **Security Assessment:** Critical Risk\nAll transmitted packets, sessions, and credentials travel in cleartext and can be captured passively by any radio within physical proximity.',
+      '• **Security Assessment:** Critical Risk\nAll transmitted packets, sessions, and credentials travel in cleartext and can be captured passively by any device within physical proximity.',
     ];
     const pointsFr = [
       '• **Architecture :** Point d’accès ouvert sans aucun chiffrement.',
@@ -53,7 +53,7 @@ export function generateTechnicalAnalysis(
         : isEss
         ? ['• **Topologie réseau :** Extended Service Set (ESS / Mode Infrastructure)\nInfrastructure sans fil centralisée standard où les stations clientes s’associent à un point d’accès.']
         : []),
-      '• **Évaluation de sécurité :** Risque critique\nL’ensemble des flux circule en clair et peut être intercepté passivement par n’importe quel équipement radio à portée.',
+      '• **Évaluation de sécurité :** Risque critique\nL’ensemble des flux circule en clair et peut être intercepté passivement par n’importe quel équipement à portée.',
     ];
     return {
       en: pointsEn.join('\n\n'),
@@ -224,8 +224,8 @@ export function generateTechnicalAnalysis(
   }
 
   if (cipherBitsEn.length > 0) {
-    pointsEn.push(`• Symmetric Ciphers: ${cipherBitsEn.join(' + ')}.`);
-    pointsFr.push(`• Chiffrement symétrique\u00A0: ${cipherBitsFr.join(' + ')}.`);
+    pointsEn.push(`• **Symmetric Ciphers:** ${cipherBitsEn.join(' + ')}.`);
+    pointsFr.push(`• **Chiffrement symétrique\u00A0:** ${cipherBitsFr.join(' + ')}.`);
   }
 
   // 3. Key Management & AKMs
@@ -288,52 +288,52 @@ export function generateTechnicalAnalysis(
   }
 
   if (akmEn.length > 0) {
-    pointsEn.push(`• Key Management (AKM): ${akmEn.join(' + ')}.`);
-    pointsFr.push(`• Gestion des clés (AKM)\u00A0: ${akmFr.join(' + ')}.`);
+    pointsEn.push(`• **Key Management (AKM):** ${akmEn.join(' + ')}.`);
+    pointsFr.push(`• **Gestion des clés (AKM)\u00A0:** ${akmFr.join(' + ')}.`);
   }
 
   // 4. Protected Management Frames (PMF / 802.11w)
   if (upper.includes('MFPR')) {
-    pointsEn.push('• Frame Protection (802.11w PMF): REQUIRED (MFPR)\nManagement Frame Protection is mandatory. Clients without PMF support are refused connection. Fully protects against deauthentication and disassociation spoofing attacks.');
-    pointsFr.push('• Protection des trames (802.11w PMF)\u00A0: OBLIGATOIRE (MFPR)\nChiffrement des trames de gestion requis. Les clients non compatibles sont rejetés. Immunise totalement contre les attaques de désauthentification par spoofing.');
+    pointsEn.push('• **Frame Protection (802.11w PMF):** REQUIRED (MFPR)\nManagement Frame Protection is mandatory. Clients without PMF support are refused connection. Fully protects against deauthentication and disassociation spoofing attacks.');
+    pointsFr.push('• **Protection des trames (802.11w PMF)\u00A0:** OBLIGATOIRE (MFPR)\nChiffrement des trames de gestion requis. Les clients non compatibles sont rejetés. Immunise totalement contre les attaques de désauthentification par spoofing.');
   } else if (upper.includes('MFPC')) {
-    pointsEn.push('• Frame Protection (802.11w PMF): CAPABLE (MFPC)\nManagement Frame Protection is supported optionally for compatible client devices.');
-    pointsFr.push('• Protection des trames (802.11w PMF)\u00A0: SUPPORTÉE (MFPC)\nProtection des trames de gestion active en option pour les équipements clients compatibles.');
+    pointsEn.push('• **Frame Protection (802.11w PMF):** CAPABLE (MFPC)\nManagement Frame Protection is supported optionally for compatible client devices.');
+    pointsFr.push('• **Protection des trames (802.11w PMF)\u00A0:** SUPPORTÉE (MFPC)\nProtection des trames de gestion active en option pour les équipements clients compatibles.');
   } else {
-    pointsEn.push('• Frame Protection (802.11w PMF): NONE\nManagement frames are transmitted unencrypted; clients remain vulnerable to spoofed deauthentication DoS attacks.');
-    pointsFr.push('• Protection des trames (802.11w PMF)\u00A0: ABSENTE\nLes trames de gestion circulent en clair ; les clients restent vulnérables aux attaques DoS par désauthentification.');
+    pointsEn.push('• **Frame Protection (802.11w PMF):** NONE\nManagement frames are transmitted unencrypted; clients remain vulnerable to spoofed deauthentication DoS attacks.');
+    pointsFr.push('• **Protection des trames (802.11w PMF)\u00A0:** ABSENTE\nLes trames de gestion circulent en clair ; les clients restent vulnérables aux attaques DoS par désauthentification.');
   }
 
   // 5. Mobility / Fast Roaming (802.11r) & Modern Link Setup (FILS / DPP)
   if (upper.includes('FT/PSK') || upper.includes('FT/EAP') || upper.includes('FT+') || upper.includes('FT-') || upper.includes('FT/SAE')) {
-    pointsEn.push('• Roaming & Mobility: Fast BSS Transition (IEEE 802.11r FT) Active\nCaches master keys to permit instant sub-50ms handoffs between access points without full re-authentication (ideal for VoIP and low-latency mesh networks).');
-    pointsFr.push('• Mobilité & Roaming\u00A0: Fast BSS Transition (IEEE 802.11r FT) Activé\nPréserve les clés maîtresses pour basculer instantanément (<50\u00A0ms) d’une borne à l’autre sans coupure (idéal VoIP et réseaux Mesh).');
+    pointsEn.push('• **Roaming & Mobility:** Fast BSS Transition (IEEE 802.11r FT) Active\nCaches master keys to permit instant sub-50ms handoffs between access points without full re-authentication (ideal for VoIP and low-latency mesh networks).');
+    pointsFr.push('• **Mobilité & Roaming\u00A0:** Fast BSS Transition (IEEE 802.11r FT) Activé\nPréserve les clés maîtresses pour basculer instantanément (<50\u00A0ms) d’une borne à l’autre sans coupure (idéal VoIP et réseaux Mesh).');
   }
 
   if (hasFils) {
-    pointsEn.push('• Roaming & Initial Link: Fast Initial Link Setup (IEEE 802.11ai FILS)\nOptimizes AP association and authentication to achieve sub-100ms ultra-fast connection times.');
-    pointsFr.push('• Itinérance & Connexion\u00A0: Fast Initial Link Setup (IEEE 802.11ai FILS)\nOptimise l’association et l’authentification pour atteindre des temps de connexion ultra-rapides inférieurs à 100\u00A0ms.');
+    pointsEn.push('• **Roaming & Initial Link:** Fast Initial Link Setup (IEEE 802.11ai FILS)\nOptimizes AP association and authentication to achieve sub-100ms ultra-fast connection times.');
+    pointsFr.push('• **Itinérance & Connexion\u00A0:** Fast Initial Link Setup (IEEE 802.11ai FILS)\nOptimise l’association et l’authentification pour atteindre des temps de connexion ultra-rapides inférieurs à 100\u00A0ms.');
   }
 
   if (hasDpp) {
-    pointsEn.push('• Provisioning: Device Provisioning Protocol (DPP / Wi-Fi Easy Connect)\nModern, cryptographically secure public-key enrollment protocol replacing legacy WPS (QR code / NFC enrollment).');
-    pointsFr.push('• Provisionnement\u00A0: Device Provisioning Protocol (DPP / Wi-Fi Easy Connect)\nProtocole d’enrôlement moderne à clé publique remplaçant le WPS de manière hautement sécurisée (enrôlement par QR code / NFC).');
+    pointsEn.push('• **Provisioning:** Device Provisioning Protocol (DPP / Wi-Fi Easy Connect)\nModern, cryptographically secure public-key enrollment protocol replacing legacy WPS (QR code / NFC enrollment).');
+    pointsFr.push('• **Provisionnement\u00A0:** Device Provisioning Protocol (DPP / Wi-Fi Easy Connect)\nProtocole d’enrôlement moderne à clé publique remplaçant le WPS de manière hautement sécurisée (enrôlement par QR code / NFC).');
   }
 
   // 6. Network Topology (ESS vs IBSS)
   if (isIbss) {
-    pointsEn.push('• Network Topology: Independent Basic Service Set (IBSS / Ad-Hoc Peer-to-Peer)\nDecentralized direct wireless connection between client devices without a centralized router or AP. Poses distinct attack vectors directly targeting transmitting host devices (smartphones/laptops).');
-    pointsFr.push('• Topologie réseau\u00A0: Independent Basic Service Set (IBSS / Ad-Hoc Point-à-Point)\nRéseau pair-à-pair décentralisé reliant directement des appareils clients sans routeur ni borne d’accès centralisée. Implique des vecteurs d’attaque spécifiques ciblant directement les hôtes émetteurs (smartphones/ordinateurs).');
+    pointsEn.push('• **Network Topology:** Independent Basic Service Set (IBSS / Ad-Hoc Peer-to-Peer)\nDecentralized direct wireless connection between client devices without a centralized router or AP. Poses distinct attack vectors directly targeting transmitting host devices (smartphones/laptops).');
+    pointsFr.push('• **Topologie réseau\u00A0:** Independent Basic Service Set (IBSS / Ad-Hoc Point-à-Point)\nRéseau pair-à-pair décentralisé reliant directement des appareils clients sans routeur ni borne d’accès centralisée. Implique des vecteurs d’attaque spécifiques ciblant directement les hôtes émetteurs (smartphones/ordinateurs).');
   } else if (isEss) {
-    pointsEn.push('• Network Topology: Extended Service Set (ESS / Infrastructure Mode)\nStandard centralized wireless infrastructure where client stations associate to an Access Point.');
-    pointsFr.push('• Topologie réseau\u00A0: Extended Service Set (ESS / Mode Infrastructure)\nInfrastructure sans fil centralisée standard où les stations clientes s’associent à un point d’accès.');
+    pointsEn.push('• **Network Topology:** Extended Service Set (ESS / Infrastructure Mode)\nStandard centralized wireless infrastructure where client stations associate to an Access Point.');
+    pointsFr.push('• **Topologie réseau\u00A0:** Extended Service Set (ESS / Mode Infrastructure)\nInfrastructure sans fil centralisée standard où les stations clientes s’associent à un point d’accès.');
   }
 
   // 7. WPS (Information & Risk Awareness)
   const hasWpsToken = upper.includes('WPS');
   if (hasWpsToken) {
-    pointsEn.push('• Wi-Fi Protected Setup (WPS): Pairing Feature Active\n\nEnables simplified client device onboarding (via physical push-button PBC or PIN). While convenient, keeping WPS active can increase the network attack surface if PIN-based enrollment lacks rate-limiting or lockout protections (potential exposure to brute-force or Pixie Dust methods on older equipment).\n\nPhysical push-button (PBC) pairing remains the safer approach.');
-    pointsFr.push('• Wi-Fi Protected Setup (WPS)\u00A0: Protocole d’association actif\n\nFacilite l’appairage rapide des équipements clients (via bouton physique PBC ou code PIN). Bien que pratique au quotidien, son activation peut élargir la surface d’exposition du réseau en cas d’implémentation vulnérable du mode PIN (sensibilité potentielle aux tentatives de force brute ou attaques de type Pixie Dust sur certains matériels anciens ou dépourvus de verrouillage temporaire).\n\nLe mode bouton-poussoir (PBC) reste généralement privilégié.');
+    pointsEn.push('• **Wi-Fi Protected Setup (WPS):** Pairing Feature Active\n\nEnables simplified client device onboarding (via physical push-button PBC or PIN). While convenient, keeping WPS active can increase the network attack surface if PIN-based enrollment lacks rate-limiting or lockout protections (potential exposure to brute-force or Pixie Dust methods on older equipment).\n\nPhysical push-button (PBC) pairing remains the safer approach.');
+    pointsFr.push('• **Wi-Fi Protected Setup (WPS)\u00A0:** Protocole d’association actif\n\nFacilite l’appairage rapide des équipements clients (via bouton physique PBC ou code PIN). Bien que pratique au quotidien, son activation peut élargir la surface d’exposition du réseau en cas d’implémentation vulnérable du mode PIN (sensibilité potentielle aux tentatives de force brute ou attaques de type Pixie Dust sur certains matériels anciens ou dépourvus de verrouillage temporaire).\n\nLe mode bouton-poussoir (PBC) reste généralement privilégié.');
   }
 
   return {
