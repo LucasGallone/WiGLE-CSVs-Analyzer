@@ -8,4 +8,4 @@ In the meantime, you can access the tool by [clicking here.](https://lucasgallon
 Or copy-paste the following link: `https://lucasgallone.github.io/WiGLE-CSVs-Analyzer/`
 <br>
 <br>
-The tool has to be improved on some points. For now, please avoid to use it with large files, issues on the browser-side might happen.
+The tool has to be improved on some points. For now, please avoid to use it with large files, issues on the browser-side may happen.
