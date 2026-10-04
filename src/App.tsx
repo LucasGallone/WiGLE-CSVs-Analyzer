@@ -638,7 +638,7 @@ function AppContent() {
                 Cet outil a été conçu exclusivement à des fins pédagogiques, d'analyse et de recherche en sécurité réseau.<br />
                 Il n'incite en aucun cas à la connexion à des réseaux non ou mal sécurisés, pratique totalement contraire à l'éthique du wardriving.
               </p>
-              <p>Ce projet a été réalisé par un développeur indépendant n'ayant aucune affiliation avec l'équipe de WiGLE.</p>
+              <p>Ce projet a été réalisé par un développeur indépendant n'ayant aucune affiliation avec l'équipe de WiGLE.net.</p>
             </>
           ) : (
             <>
