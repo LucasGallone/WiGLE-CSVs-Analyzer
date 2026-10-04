@@ -646,7 +646,7 @@ function AppContent() {
                 This tool was developed solely for educational, analytical, and network security research purposes.<br />
                 It in no way encourages connecting to unsecured or poorly secured networks, practices that are entirely contrary to proper wardriving ethics.
               </p>
-              <p>This project was created by an independent developer with no affiliation to the WiGLE team.</p>
+              <p>This project was created by an independent developer with no affiliation to the WiGLE.net team.</p>
             </>
           )}
         </div>
