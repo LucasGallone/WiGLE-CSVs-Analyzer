@@ -344,9 +344,10 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
                       : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40'
                   }`}
                 >
-                  <div className="flex items-center justify-between text-xs mb-1 font-medium">
+                  <div className="flex items-center justify-between text-xs mb-1 font-medium gap-2">
                     <span
-                      className={`truncate max-w-[220px] ${
+                      title={isOther ? '' : v.vendor}
+                      className={`truncate flex-1 min-w-0 pr-1 ${
                         isOther
                           ? 'text-slate-500 dark:text-slate-400 italic'
                           : 'text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-300 transition-colors'
@@ -354,7 +355,7 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
                     >
                       {language === 'fr' && isOther ? 'Autres fabricants' : v.vendor}
                     </span>
-                    <div className="flex items-center gap-2 font-sans">
+                    <div className="flex items-center gap-2 font-sans shrink-0">
                       <span className="text-slate-500 dark:text-slate-400 font-medium">{v.count.toLocaleString()}</span>
                       <span className="font-bold text-slate-900 dark:text-white min-w-[32px] text-right">{v.percentageFormatted}</span>
                     </div>

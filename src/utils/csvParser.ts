@@ -1,3 +1,4 @@
+import Papa from 'papaparse';
 import {
   WigleCsvHeader,
   WigleRawRecord,
@@ -10,6 +11,85 @@ import {
   FileMetadata,
 } from '../types/wigle';
 import { resolveVendor } from '../data/ouiDatabase';
+
+// Global String Interning Cache for high-performance memory deduplication
+const stringPool = new Map<string, string>();
+export function internString(str: string | number | undefined | null): string {
+  if (str === undefined || str === null || str === '') return '';
+  const s = String(str);
+  const cached = stringPool.get(s);
+  if (cached !== undefined) return cached;
+  // Keep pool bounded to avoid memory leak for arbitrary unique texts
+  if (stringPool.size < 50000) {
+    stringPool.set(s, s);
+  }
+  return s;
+}
+
+/**
+ * Intelligent observation compactor:
+ * Preserves all critical observations (all unique GPS locations for triangulation,
+ * best RSSI, first/last seen timestamps, SSID/AuthMode changes) while preventing
+ * redundant duplicate stationary observations from consuming hundreds of megabytes of RAM.
+ */
+export function addObservationCompacted(
+  existing: ProcessedAccessPoint,
+  obs: AccessPointObservation,
+  fileToAdd: string
+) {
+  existing.observationCount += 1;
+  const internedFile = internString(fileToAdd);
+  if (!existing.sourceFiles.includes(internedFile)) {
+    existing.sourceFiles.push(internedFile);
+  }
+
+  // Update timestamps
+  if (obs.timestamp) {
+    if (!existing.firstSeen || obs.timestamp < existing.firstSeen) {
+      existing.firstSeen = obs.timestamp;
+    }
+    if (!existing.lastSeen || obs.timestamp > existing.lastSeen) {
+      existing.lastSeen = obs.timestamp;
+      existing.latestRssi = obs.rssi;
+    }
+  }
+
+  // Update best RSSI & GPS
+  if (obs.rssi > existing.bestRssi || existing.bestRssi === 0 || existing.bestRssi === -999) {
+    existing.bestRssi = obs.rssi;
+    if (obs.latitude !== 0 && obs.longitude !== 0) {
+      existing.latitude = obs.latitude;
+      existing.longitude = obs.longitude;
+      existing.altitudeMeters = obs.altitude;
+      existing.accuracyMeters = obs.accuracy;
+    }
+  }
+
+  const obsList = existing.observations;
+  if (obsList.length < 10) {
+    obsList.push(obs);
+    return;
+  }
+
+  if (obsList.length >= 60) {
+    return;
+  }
+
+  // Check if GPS is significantly distinct (> 15 meters) from all existing observations
+  const isDistinctGps =
+    obs.latitude !== 0 &&
+    obs.longitude !== 0 &&
+    !obsList.some((o) => Math.abs(o.latitude - obs.latitude) < 0.00015 && Math.abs(o.longitude - obs.longitude) < 0.00015);
+
+  // Check if SSID or AuthMode changed
+  const isDistinctState =
+    (obs.ssid && !obsList.some((o) => o.ssid === obs.ssid)) ||
+    (obs.authMode && !obsList.some((o) => o.authMode === obs.authMode));
+
+  if (isDistinctGps || isDistinctState || obs.rssi === existing.bestRssi) {
+    obsList.push(obs);
+  }
+}
 
 /**
  * Automatically generates a comprehensive technical analysis description based on WiGLE capability tokens.
@@ -1281,6 +1361,276 @@ export function parseWigleCsvString(
   };
 }
 
+export interface ParseProgressInfo {
+  fileName: string;
+  rowsParsed: number;
+  uniqueApsCount: number;
+  percent?: number;
+}
+
+/**
+ * High-performance streaming parser for large CSV files (+100MB).
+ * Parses chunk-by-chunk using PapaParse and yields execution to the browser event loop,
+ * preventing UI lockups and freezes while providing real-time progress feedback.
+ */
+export async function parseWigleCsvFileStreaming(
+  file: File,
+  fileName: string,
+  customOuiMap: Record<string, string> = {},
+  onProgress?: (info: ParseProgressInfo) => void
+): Promise<{
+  header: WigleCsvHeader;
+  rawRecords: WigleRawRecord[];
+  accessPoints: ProcessedAccessPoint[];
+}> {
+  return new Promise((resolve, reject) => {
+    let header: WigleCsvHeader = { rawLine: '' };
+    let colMap: Record<string, number> = {
+      MAC: 0,
+      SSID: 1,
+      AUTHMODE: 2,
+      FIRSTSEEN: 3,
+      CHANNEL: 4,
+      FREQUENCY: 5,
+      RSSI: 6,
+      CURRENTLATITUDE: 7,
+      CURRENTLONGITUDE: 8,
+      ALTITUDEMETERS: 9,
+      ACCURACYMETERS: 10,
+      TYPE: 11,
+      RCOIS: 12,
+      MFGID: 13,
+    };
+    let isHeaderProcessed = false;
+    let isColMapDetermined = false;
+    let isWigleFile = false;
+    const apMap = new Map<string, ProcessedAccessPoint>();
+    const rawRecords: WigleRawRecord[] = [];
+    let rowsParsed = 0;
+    let lastProgressUpdate = 0;
+    const fileSize = file.size || 1;
+
+    Papa.parse<string[]>(file, {
+      skipEmptyLines: true,
+      dynamicTyping: false,
+      chunkSize: 1024 * 1024 * 2, // 2MB streaming chunks
+      chunk: async (results, parser) => {
+        parser.pause();
+        const data = results.data;
+
+        for (let i = 0; i < data.length; i++) {
+          const cols = data[i];
+          if (!cols || cols.length === 0) continue;
+
+          // First line: Header metadata
+          if (!isHeaderProcessed) {
+            const rawLine = cols.join(',');
+            header = parseWigleHeader(rawLine);
+            isWigleFile = isWigleModel(header);
+            isHeaderProcessed = true;
+            continue;
+          }
+
+          // Second line: Column names detection
+          if (!isColMapDetermined) {
+            const rowUpper = cols.map((c) => String(c || '').toUpperCase().trim());
+            const lineUpper = rowUpper.join(',');
+            const isHeaderRow =
+              lineUpper.includes('MAC') ||
+              lineUpper.includes('BSSID') ||
+              lineUpper.includes('NETID') ||
+              lineUpper.includes('SSID');
+
+            if (isHeaderRow) {
+              const newMap: Record<string, number> = {};
+              rowUpper.forEach((name, idx) => {
+                const clean = name.replace(/["'#\uFEFF\r\n]/g, '').trim();
+                newMap[clean] = idx;
+                if (clean === 'BSSID' || clean === 'NETID') newMap.MAC = idx;
+                if (clean === 'CAPABILITIES' || clean === 'FLAGS' || clean === 'SECURITY') newMap.AUTHMODE = idx;
+                if (clean === 'TIME' || clean === 'FIRSTTIME' || clean === 'TIMESTAMP') newMap.FIRSTSEEN = idx;
+                if (clean === 'CH') newMap.CHANNEL = idx;
+                if (clean === 'FREQ') newMap.FREQUENCY = idx;
+                if (clean === 'SIGNAL' || clean === 'LEVEL' || clean === 'BESTLEVEL') newMap.RSSI = idx;
+                if (clean === 'LAT' || clean === 'LATITUDE' || clean === 'BESTLAT' || clean === 'LASTLAT') newMap.CURRENTLATITUDE = idx;
+                if (clean === 'LON' || clean === 'LNG' || clean === 'LONGITUDE' || clean === 'BESTLON' || clean === 'LASTLON') newMap.CURRENTLONGITUDE = idx;
+                if (clean === 'ALT' || clean === 'ALTITUDE') newMap.ALTITUDEMETERS = idx;
+                if (clean === 'ACC' || clean === 'ACCURACY') newMap.ACCURACYMETERS = idx;
+                if (clean === 'NETWORKTYPE' || clean === 'NETTYPE' || clean === 'TYPE') newMap.TYPE = idx;
+              });
+              colMap = newMap;
+              isColMapDetermined = true;
+              continue;
+            }
+            isColMapDetermined = true;
+          }
+
+          if (cols.length < 3) continue;
+
+          const rawMac = cols[colMap.MAC ?? 0] || '';
+          if (!rawMac || rawMac.length < 5 || rawMac.startsWith('#')) continue;
+
+          const mac = normalizeMac(rawMac);
+          const ssid = (cols[colMap.SSID ?? 1] || '').trim();
+          const authMode = cols[colMap.AUTHMODE ?? 2] || '';
+          const firstSeen = cols[colMap.FIRSTSEEN ?? 3] || '';
+          const channelRaw = (cols[colMap.CHANNEL ?? 4] || '').trim();
+          const hasValidChannel = channelRaw !== '' && channelRaw !== '0';
+          const channel = hasValidChannel ? channelRaw : (isWigleFile ? '' : '1');
+          const freqRaw = cols[colMap.FREQUENCY ?? 5];
+          const frequency = freqRaw && parseInt(freqRaw, 10) > 0 ? parseInt(freqRaw, 10) : (hasValidChannel ? channelToFrequency(channel) : undefined);
+          const rssiRaw = cols[colMap.RSSI ?? 6] || '-80';
+          const rssi = parseFloat(rssiRaw) || -80;
+          const latRaw = cols[colMap.CURRENTLATITUDE ?? 7] || '0';
+          const lngRaw = cols[colMap.CURRENTLONGITUDE ?? 8] || '0';
+          const latitude = parseFloat(latRaw) || 0;
+          const longitude = parseFloat(lngRaw) || 0;
+          const altRaw = cols[colMap.ALTITUDEMETERS ?? 9];
+          const altitudeMeters = altRaw ? parseFloat(altRaw) : undefined;
+          const accRaw = cols[colMap.ACCURACYMETERS ?? 10];
+          const accuracyMeters = accRaw ? parseFloat(accRaw) : undefined;
+
+          let typeColIndex = colMap.TYPE;
+          if (typeColIndex === undefined) {
+            for (let cIdx = cols.length - 1; cIdx >= 0; cIdx--) {
+              const val = (cols[cIdx] || '').trim().toUpperCase();
+              if (['WIFI', 'BLE', 'BT', 'GSM', 'LTE', 'WCDMA', 'CDMA', 'NR'].includes(val)) {
+                typeColIndex = cIdx;
+                break;
+              }
+            }
+          }
+
+          const type = typeColIndex !== undefined ? (cols[typeColIndex] || 'WIFI').trim().toUpperCase() : 'WIFI';
+          if (type !== 'WIFI' && ['GSM', 'LTE', 'WCDMA', 'CDMA', 'NR', 'BT', 'BLE'].includes(type)) {
+            continue;
+          }
+
+          const rcois = cols[colMap.RCOIS ?? 12] || '';
+          const mfgId = cols[colMap.MFGID ?? 13] || '';
+
+          const rawRec: WigleRawRecord = {
+            mac,
+            ssid,
+            authMode,
+            firstSeen,
+            channel,
+            frequency,
+            rssi,
+            latitude,
+            longitude,
+            altitudeMeters,
+            accuracyMeters,
+            type,
+            rcois,
+            mfgId,
+          };
+          rawRecords.push(rawRec);
+
+          const observation: AccessPointObservation = {
+            timestamp: firstSeen,
+            rssi,
+            latitude,
+            longitude,
+            altitude: altitudeMeters,
+            accuracy: accuracyMeters,
+            sourceFile: fileName,
+            channel,
+            frequency,
+            authMode,
+            ssid,
+            isFromWigleFile: isWigleFile,
+          };
+
+          const existing = apMap.get(mac);
+          if (existing) {
+            addObservationCompacted(existing, observation, fileName);
+          } else {
+            const { vendor, oui } = resolveVendor(mac, customOuiMap);
+            const band = hasValidChannel ? frequencyOrChannelToBand(frequency, channel) : (isWigleFile ? 'Unknown' : frequencyOrChannelToBand(frequency, channel));
+            const security = classifySecurity(authMode);
+            const hasWps = (authMode || '').toUpperCase().includes('WPS');
+
+            const ap: ProcessedAccessPoint = {
+              mac,
+              oui: internString(oui),
+              vendor: internString(vendor),
+              ssid,
+              isSSIDHidden: !ssid || ssid.length === 0,
+              hasWps,
+              authMode: internString(authMode),
+              security,
+              channel: internString(channel),
+              frequency,
+              band: internString(band) as WifiBand,
+              firstSeen,
+              lastSeen: firstSeen,
+              bestRssi: rssi,
+              latestRssi: rssi,
+              latitude,
+              longitude,
+              altitudeMeters,
+              accuracyMeters,
+              rcois: internString(rcois),
+              mfgId: internString(mfgId),
+              type: internString(type),
+              observationCount: 1,
+              observations: [observation],
+              sourceFiles: [internString(fileName)],
+              isWigleOnly: isWigleFile,
+              hasCompleteDetails: !isWigleFile && hasValidChannel,
+            };
+
+            apMap.set(mac, ap);
+          }
+
+          rowsParsed++;
+        }
+
+        // Throttle progress updates and yield to the main thread event loop so the UI stays 100% responsive
+        const now = Date.now();
+        if (now - lastProgressUpdate > 80 || rowsParsed % 5000 === 0) {
+          lastProgressUpdate = now;
+          if (onProgress) {
+            const estimatedBytes = results.meta?.cursor || 0;
+            const percent = Math.min(99, Math.round((estimatedBytes / fileSize) * 100));
+            onProgress({
+              fileName,
+              rowsParsed,
+              uniqueApsCount: apMap.size,
+              percent,
+            });
+          }
+          // Yield execution to browser event loop
+          await new Promise((r) => setTimeout(r, 0));
+        }
+
+        parser.resume();
+      },
+      complete: () => {
+        header.totalRows = rawRecords.length;
+        synchronizeLatestApObservations(apMap);
+        if (onProgress) {
+          onProgress({
+            fileName,
+            rowsParsed,
+            uniqueApsCount: apMap.size,
+            percent: 100,
+          });
+        }
+        resolve({
+          header,
+          rawRecords,
+          accessPoints: Array.from(apMap.values()),
+        });
+      },
+      error: (err) => {
+        reject(err);
+      },
+    });
+  });
+}
+
 /**
  * Synchronizes access points with multiple observations so that the main list
  * displays the latest chronological values for SSID, authMode, and security,
@@ -1425,7 +1775,7 @@ export function mergeScanSessions(
   }
 
   const allFiles = current ? [...current.files, distinctFileName] : [distinctFileName];
-  const allRaw = current ? [...current.rawRecords, ...validNewRaw] : validNewRaw;
+  const totalObsCalculated = (current?.totalRecords || (current?.accessPoints.reduce((s, a) => s + a.observationCount, 0)) || 0) + validNewRaw.length;
 
   const updatedFilesMetadata: Record<string, FileMetadata> = {
     ...(current?.filesMetadata || {}),
@@ -1461,7 +1811,7 @@ export function mergeScanSessions(
     });
   }
 
-  // Process new raw records
+  // Process new raw records with compacted observation storage & interned strings
   validNewRaw.forEach((record) => {
     const mac = record.mac;
     const observation: AccessPointObservation = {
@@ -1481,12 +1831,7 @@ export function mergeScanSessions(
 
     if (apMap.has(mac)) {
       const existing = apMap.get(mac)!;
-      existing.observationCount += 1;
-      existing.observations.push(observation);
-      const fileToAdd = record.sourceFile || distinctFileName;
-      if (!existing.sourceFiles.includes(fileToAdd)) {
-        existing.sourceFiles.push(fileToAdd);
-      }
+      addObservationCompacted(existing, observation, record.sourceFile || distinctFileName);
 
       const isValidGps = record.latitude !== 0 && record.longitude !== 0;
 
@@ -1511,13 +1856,13 @@ export function mergeScanSessions(
         if (existing.isWigleOnly || !existing.hasCompleteDetails) {
           existing.isWigleOnly = false;
           existing.hasCompleteDetails = true;
-          existing.authMode = record.authMode;
+          existing.authMode = internString(record.authMode);
           existing.security = classifySecurity(record.authMode);
           if (record.channel && record.channel !== '0' && record.channel !== '') {
-            existing.channel = record.channel;
+            existing.channel = internString(record.channel);
             if (record.frequency) {
               existing.frequency = record.frequency;
-              existing.band = frequencyOrChannelToBand(record.frequency, record.channel);
+              existing.band = internString(frequencyOrChannelToBand(record.frequency, record.channel)) as WifiBand;
             }
           }
           if (record.authMode && record.authMode.toUpperCase().includes('WPS')) {
@@ -1525,14 +1870,14 @@ export function mergeScanSessions(
           }
         } else {
           if (record.authMode && record.authMode.length >= existing.authMode.length) {
-            existing.authMode = record.authMode;
+            existing.authMode = internString(record.authMode);
             existing.security = classifySecurity(record.authMode);
           }
           if (record.channel && record.channel !== '0' && record.channel !== '') {
-            existing.channel = record.channel;
+            existing.channel = internString(record.channel);
             if (record.frequency) {
               existing.frequency = record.frequency;
-              existing.band = frequencyOrChannelToBand(record.frequency, record.channel);
+              existing.band = internString(frequencyOrChannelToBand(record.frequency, record.channel)) as WifiBand;
             }
           }
           if (record.authMode && record.authMode.toUpperCase().includes('WPS')) {
@@ -1543,21 +1888,24 @@ export function mergeScanSessions(
         // Record from a WiGLE file: do NOT degrade if existing already has complete details
         if (existing.isWigleOnly) {
           if (record.authMode && record.authMode.length > existing.authMode.length) {
-            existing.authMode = record.authMode;
+            existing.authMode = internString(record.authMode);
             existing.security = classifySecurity(record.authMode);
           }
           if (record.channel && record.channel !== '0' && record.channel !== '' && (!existing.channel || existing.channel === '0')) {
-            existing.channel = record.channel;
+            existing.channel = internString(record.channel);
             if (record.frequency) {
               existing.frequency = record.frequency;
-              existing.band = frequencyOrChannelToBand(record.frequency, record.channel);
+              existing.band = internString(frequencyOrChannelToBand(record.frequency, record.channel)) as WifiBand;
             }
+          }
+          if (record.authMode && record.authMode.toUpperCase().includes('WPS')) {
+            existing.hasWps = true;
           }
         }
       }
 
-      if (record.rcois && !existing.rcois) existing.rcois = record.rcois;
-      if (record.mfgId && !existing.mfgId) existing.mfgId = record.mfgId;
+      if (record.rcois && !existing.rcois) existing.rcois = internString(record.rcois);
+      if (record.mfgId && !existing.mfgId) existing.mfgId = internString(record.mfgId);
 
       if (record.firstSeen && (!existing.firstSeen || record.firstSeen < existing.firstSeen)) {
         existing.firstSeen = record.firstSeen;
@@ -1568,24 +1916,25 @@ export function mergeScanSessions(
       }
     } else {
       const { vendor, oui } = resolveVendor(mac, customOuiMap);
-      const security = classifySecurity(record.authMode);
+      const isWigle = newIsWigle;
       const hasChannel = record.channel !== '0' && record.channel !== '' && record.channel !== undefined;
       const band = hasChannel
         ? frequencyOrChannelToBand(record.frequency, record.channel)
         : (newIsWigle ? 'Unknown' : frequencyOrChannelToBand(record.frequency, record.channel));
+      const security = classifySecurity(record.authMode);
 
       const ap: ProcessedAccessPoint = {
         mac,
-        oui,
-        vendor,
+        oui: internString(oui),
+        vendor: internString(vendor),
         ssid: record.ssid,
         isSSIDHidden: !record.ssid || record.ssid.length === 0,
         hasWps: (record.authMode || '').toUpperCase().includes('WPS'),
-        authMode: record.authMode,
+        authMode: internString(record.authMode),
         security,
-        channel: hasChannel ? record.channel : (newIsWigle ? '' : record.channel),
+        channel: hasChannel ? internString(record.channel) : (newIsWigle ? '' : internString(record.channel)),
         frequency: record.frequency,
-        band,
+        band: internString(band) as WifiBand,
         firstSeen: record.firstSeen,
         lastSeen: record.firstSeen,
         bestRssi: record.rssi,
@@ -1594,14 +1943,14 @@ export function mergeScanSessions(
         longitude: record.longitude,
         altitudeMeters: record.altitudeMeters,
         accuracyMeters: record.accuracyMeters,
-        rcois: record.rcois,
-        mfgId: record.mfgId,
-        type: record.type,
+        rcois: internString(record.rcois),
+        mfgId: internString(record.mfgId),
+        type: internString(record.type || 'WIFI'),
         observationCount: 1,
         observations: [observation],
-        sourceFiles: record.sourceFile ? [record.sourceFile] : [distinctFileName],
-        isWigleOnly: newIsWigle,
-        hasCompleteDetails: !newIsWigle && hasChannel,
+        sourceFiles: record.sourceFile ? [internString(record.sourceFile)] : [internString(distinctFileName)],
+        isWigleOnly: isWigle,
+        hasCompleteDetails: !isWigle && hasChannel,
       };
 
       apMap.set(mac, ap);
@@ -1651,7 +2000,8 @@ export function mergeScanSessions(
     header: chosenHeader,
     files: allFiles,
     filesMetadata: updatedFilesMetadata,
-    rawRecords: allRaw,
+    rawRecords: [],
+    totalRecords: totalObsCalculated,
     accessPoints,
     loadedAt: new Date().toISOString(),
     geoBounds,

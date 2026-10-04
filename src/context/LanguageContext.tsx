@@ -13,7 +13,7 @@ const translations: Record<Language, Record<string, string>> = {
   en: {
     // Header & Navigation
     'header.import': 'Import CSV',
-    'header.oui': 'IEEE OUI Registry',
+    'header.oui': 'OUI Database',
     'header.addCsv': 'Add CSV File',
     'header.mainMenu': 'Main Menu',
 

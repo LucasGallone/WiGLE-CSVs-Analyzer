@@ -125,6 +125,7 @@ export interface ScanSessionData {
   files: string[];
   filesMetadata?: Record<string, FileMetadata>;
   rawRecords: WigleRawRecord[];
+  totalRecords?: number;
   accessPoints: ProcessedAccessPoint[];
   loadedAt: string;
   geoBounds?: {

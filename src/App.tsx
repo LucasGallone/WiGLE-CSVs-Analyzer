@@ -6,6 +6,8 @@ import {
 } from './types/wigle';
 import {
   parseWigleCsvString,
+  parseWigleCsvFileStreaming,
+  ParseProgressInfo,
   mergeScanSessions,
   refreshVendors,
   isWigleModel,
@@ -40,6 +42,8 @@ function AppContent() {
   const [session, setSession] = useState<ScanSessionData | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingFileCount, setProcessingFileCount] = useState(1);
+  const [currentProcessingFileName, setCurrentProcessingFileName] = useState('');
+  const [progressInfo, setProgressInfo] = useState<ParseProgressInfo | null>(null);
   const [customOuiMap, setCustomOuiMap] = useState<Record<string, string>>({});
   const [selectedAp, setSelectedAp] = useState<ProcessedAccessPoint | null>(null);
   const [inspectingAp, setInspectingAp] = useState<ProcessedAccessPoint | null>(null);
@@ -104,7 +108,60 @@ function AppContent() {
     }
   };
 
-  // CSV Loader with visual processing indicator
+  // High-performance streaming loader for large files (+100MB) without freezing the UI
+  const handleLoadFiles = async (files: File[]) => {
+    if (!files || files.length === 0) return;
+    setIsProcessing(true);
+    setProcessingFileCount(files.length);
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setCurrentProcessingFileName(file.name);
+        setProgressInfo({
+          fileName: file.name,
+          rowsParsed: 0,
+          uniqueApsCount: 0,
+          percent: 0,
+        });
+
+        // Parse file chunk-by-chunk asynchronously via streaming PapaParse
+        const parsed = await parseWigleCsvFileStreaming(
+          file,
+          file.name,
+          customOuiMap,
+          (progress) => {
+            setProgressInfo(progress);
+          }
+        );
+
+        setSession((prevSession) => {
+          const baseSession = prevSession;
+          return mergeScanSessions(
+            baseSession,
+            parsed.header,
+            parsed.rawRecords,
+            file.name,
+            customOuiMap
+          );
+        });
+
+        // Small pause between multiple files to allow React state flush
+        await new Promise((r) => setTimeout(r, 20));
+      }
+
+      setIsImportModalOpen(false);
+      setSelectedAp(null);
+    } catch (err) {
+      console.error('Error streaming CSV file:', err);
+    } finally {
+      setIsProcessing(false);
+      setProgressInfo(null);
+      setCurrentProcessingFileName('');
+    }
+  };
+
+  // Legacy CSV Loader (fallback for raw string content)
   const handleLoadCsv = (
     csvContent: string,
     fileName: string,
@@ -113,6 +170,7 @@ function AppContent() {
   ) => {
     setIsProcessing(true);
     setProcessingFileCount(totalFilesCount || 1);
+    setCurrentProcessingFileName(fileName);
     setTimeout(() => {
       try {
         const { header, rawRecords } = parseWigleCsvString(csvContent, fileName, customOuiMap);
@@ -127,10 +185,10 @@ function AppContent() {
           );
         });
         setIsImportModalOpen(false);
-        // Keep full view of the map without selecting or blinking any AP by default
         setSelectedAp(null);
       } finally {
         setIsProcessing(false);
+        setCurrentProcessingFileName('');
       }
     }, 60);
   };
@@ -313,6 +371,7 @@ function AppContent() {
 
               {/* Initial Import Dropzone */}
               <FileDropzone
+                onLoadFiles={handleLoadFiles}
                 onLoadCsv={handleLoadCsv}
                 onClearSession={handleClearSession}
                 loadedFiles={[]}
@@ -383,7 +442,7 @@ function AppContent() {
                 <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-50 dark:bg-cyan-950/60 border border-cyan-300 dark:border-cyan-800 text-cyan-800 dark:text-cyan-300 text-xs font-semibold">
                   <Layers className="w-3.5 h-3.5 shrink-0" />
                   <span>
-                    <strong>{session.rawRecords.length.toLocaleString()}</strong>{' '}
+                    <strong>{(session.totalRecords || session.rawRecords?.length || session.accessPoints.reduce((sum, ap) => sum + ap.observationCount, 0)).toLocaleString()}</strong>{' '}
                     {language === 'fr' ? 'captures au total' : 'captures in total'}
                   </span>
                 </span>
@@ -549,11 +608,12 @@ function AppContent() {
             </div>
 
             <FileDropzone
+              onLoadFiles={handleLoadFiles}
               onLoadCsv={handleLoadCsv}
               onClearSession={handleClearSession}
               loadedFiles={session?.files || []}
               totalAps={session?.accessPoints.length || 0}
-              totalRecords={session?.rawRecords.length || 0}
+              totalRecords={session?.totalRecords || session?.rawRecords?.length || session?.accessPoints.reduce((sum, ap) => sum + ap.observationCount, 0) || 0}
               headerInfo={session?.header}
               isInitialModal={false}
               isAddCsvModal={true}
@@ -598,14 +658,14 @@ function AppContent() {
         />
       )}
 
-      {/* File Processing Screen / Modal Overlay */}
+      {/* File Processing Screen / Modal Overlay with Real-Time Progress Feedback */}
       {isProcessing && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-2xl flex flex-col items-center text-center space-y-4 animate-scaleUp">
-            <div className="p-4 rounded-2xl bg-cyan-50 dark:bg-cyan-950/60 border border-cyan-200 dark:border-cyan-800 text-cyan-600 dark:text-cyan-400">
+            <div className="p-4 rounded-2xl bg-cyan-50 dark:bg-cyan-950/60 border border-cyan-200 dark:border-cyan-800 text-cyan-600 dark:text-cyan-400 shadow-sm">
               <Loader2 className="w-8 h-8 animate-spin" />
             </div>
-            <div>
+            <div className="w-full space-y-2">
               <h3 className="text-lg font-black text-slate-900 dark:text-white">
                 {language === 'fr'
                   ? processingFileCount > 1
@@ -615,15 +675,37 @@ function AppContent() {
                   ? 'Processing files...'
                   : 'Processing file...'}
               </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              {currentProcessingFileName && (
+                <p className="text-xs font-semibold text-cyan-600 dark:text-cyan-400 truncate max-w-[280px] mx-auto font-sans">
+                  {currentProcessingFileName}
+                </p>
+              )}
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 {language === 'fr'
-                  ? processingFileCount > 1
-                    ? 'Veuillez patienter. Le temps de chargement varie selon la taille des fichiers.'
-                    : 'Veuillez patienter. Le temps de chargement varie selon la taille du fichier.'
-                  : processingFileCount > 1
-                  ? 'Please wait. Loading time varies depending on file size.'
-                  : 'Please wait. Loading time varies depending on file size.'}
+                  ? 'Veuillez patienter. Le temps de chargement varie selon la taille du fichier.'
+                  : 'Please wait. Loading time varies depending on the file size.'}
               </p>
+
+              {/* Real-Time Progress Bar */}
+              {progressInfo && (
+                <div className="pt-3 space-y-2 w-full text-left">
+                  <div className="flex items-center justify-between text-xs font-semibold">
+                    <span className="text-slate-600 dark:text-slate-300 font-sans">
+                      {progressInfo.rowsParsed.toLocaleString()} {language === 'fr' ? 'lignes analysées' : 'scanned rows'}
+                    </span>
+                    <span className="text-cyan-600 dark:text-cyan-400 font-bold font-sans">
+                      {progressInfo.uniqueApsCount.toLocaleString()} {language === 'fr' ? 'APs uniques' : 'unique APs'}
+                    </span>
+                  </div>
+
+                  <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden border border-slate-200 dark:border-slate-700">
+                    <div
+                      className="h-full bg-gradient-to-r from-indigo-500 to-cyan-500 transition-all duration-200"
+                      style={{ width: `${Math.max(5, progressInfo.percent || 10)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

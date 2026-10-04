@@ -4,7 +4,8 @@ import { WigleHeaderInfo } from '../../types/wigle';
 import { useLanguage } from '../../context/LanguageContext';
 
 interface FileDropzoneProps {
-  onLoadCsv: (csvContent: string, fileName: string, isAppend: boolean, totalFilesCount?: number) => void;
+  onLoadFiles?: (files: File[]) => void;
+  onLoadCsv?: (csvContent: string, fileName: string, isAppend: boolean, totalFilesCount?: number) => void;
   onClearSession: () => void;
   loadedFiles: string[];
   totalAps: number;
@@ -15,6 +16,7 @@ interface FileDropzoneProps {
 }
 
 export const FileDropzone: React.FC<FileDropzoneProps> = ({
+  onLoadFiles,
   onLoadCsv,
   onClearSession,
   loadedFiles,
@@ -30,19 +32,31 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const count = files.length;
+    const fileArray = Array.from(files);
 
-    Array.from(files).forEach((file, index) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = e.target?.result as string;
-        if (text) {
-          const append = isAddCsvModal || loadedFiles.length > 0 || index > 0;
-          onLoadCsv(text, file.name, append, count);
-        }
-      };
-      reader.readAsText(file);
-    });
+    if (onLoadFiles) {
+      onLoadFiles(fileArray);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      return;
+    }
+
+    if (onLoadCsv) {
+      const count = fileArray.length;
+      fileArray.forEach((file, index) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const text = e.target?.result as string;
+          if (text) {
+            const append = isAddCsvModal || loadedFiles.length > 0 || index > 0;
+            onLoadCsv(text, file.name, append, count);
+          }
+        };
+        reader.readAsText(file);
+      });
+    }
+
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
