@@ -1,11 +1,24 @@
 <!doctype html>
-<html lang="en" class="dark bg-slate-950">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('wigle_analyzer_theme_v1');
+          var isDark = stored ? stored === 'dark' : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
     <title>WiGLE WiFi CSVs Analyzer</title>
     <meta name="description" content="A web interface for analyzing CSV files generated with WiGLE for Android. Analysis of detected WiFi networks, visualization on an interactive map, detailed summaries of encryption types..." />
-    <meta property="og:title" content="WiGLE WiFi CSV Analyzer" />
+    <meta property="og:title" content="WiGLE WiFi CSVs Analyzer" />
     <meta property="og:description" content="A web interface for analyzing CSV files generated with WiGLE for Android. Analysis of detected WiFi networks, visualization on an interactive map, detailed summaries of encryption types..." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
