@@ -28,7 +28,7 @@ You can track changes to a specific network across multiple scans, such as modif
 An interactive map allows you to clearly visualize network locations and the distribution of Wi-Fi networks across different areas. A built-in triangulation tool helps pinpoint the exact location of a specific network; calculations are based on various reception points and, crucially, the signal strength at those specific locations.
 <br>
 <br>
-The tool includes a technical analysis feature that helps you understand how a network operates—particularly its encryption—and identify potential risks and vulnerabilities.
+The tool includes a technical analysis feature that helps you understand how a network operates, particularly its encryption, and identify potential risks and vulnerabilities.
 <br>
 <br>
 Note: You can import and merge multiple CSV files.
