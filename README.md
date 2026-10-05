@@ -42,7 +42,7 @@ It in no way encourages connecting to unsecured or poorly secured networks, prac
 This project was created by an independent developer with no affiliation to the WiGLE.net team.
 <br>
 <br>
-The WiGLE app collects publicly available information—the kind any device scanning Wi-Fi bands can pick up—without actually connecting to the networks.
+The WiGLE app collects publicly available information, the kind any device scanning Wi-Fi bands can pick up, without actually connecting to the networks.
 <br>
 <br>
 Please use this tool responsibly. Put it to good use for purely technical, research, or curiosity-driven purposes.
