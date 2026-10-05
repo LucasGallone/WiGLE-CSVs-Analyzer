@@ -16,7 +16,11 @@ It was successfully tested with a 150,000 lines file, so long "runs" may be impo
 Just don't import your entire database for now. :)
 
 ## Access the tool
-To access the tool, [click here.](https://lucasgallone.github.io/WiGLE-CSVs-Analyzer/) Or copy and paste the address below:
+To access the tool, [click here.](https://lucasgallone.github.io/WiGLE-CSVs-Analyzer/)
+<br>
+<br>
+Or copy and paste the address below:
+<br>
 `https://lucasgallone.github.io/WiGLE-CSVs-Analyzer/`
 
 ## Presentation & Purposes of this tool
