@@ -1,5 +1,10 @@
 # CSVs Analyzer for WiGLE for Android
 
+<img width="900" alt="wigle-1" src="https://github.com/user-attachments/assets/19b20439-4561-4ecb-8693-43580255cb65" />
+<img width="900" alt="wigle-2" src="https://github.com/user-attachments/assets/ce48cd3d-dc25-400a-8a86-a1639d9f8072" />
+
+> The screenshots are deliberately kept simple for privacy reasons, so as not to publicly display information related to personal networks. Discover the tool by yourself and try now with one of your CSV files!
+
 ## Optimization in progress!
 The tool still requires a few improvements.
 <br>
