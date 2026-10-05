@@ -22,7 +22,7 @@ You can view statistics such as the number of encrypted versus open networks, th
 It is easy to generate statistics regarding the encryption methods used and to obtain information about the manufacturers of the discovered networks.
 <br>
 <br>
-You can track changes to a specific network across multiple scans—such as modifications to its encryption or SSID.
+You can track changes to a specific network across multiple scans, such as modifications to its encryption or SSID.
 <br>
 <br>
 An interactive map allows you to clearly visualize network locations and the distribution of Wi-Fi networks across different areas. A built-in triangulation tool helps pinpoint the exact location of a specific network; calculations are based on various reception points and, crucially, the signal strength at those specific locations.
