@@ -33,6 +33,35 @@ The tool includes a technical analysis feature that helps you understand how a n
 <br>
 Note: You can import and merge multiple CSV files.
 
+## How to collect your scan reports as CSVs
+
+First, ideally, you will need a WiGLE account.
+<br>
+<br>
+The best practice is to go to the app and select "Database" from the left-hand menu.
+<br>Then, tap "CSV Export Run" to export your current scan (do this before uploading it to WiGLE, otherwise the file will reset and you will end up with an empty CSV!) or tap "CSV Export DB" to export your entire database.
+<br>
+<br>
+Note about database exports: The file can be very large if you have found a large number of networks.
+<br>
+<br>
+The second practice is to [click here](https://wigle.net/uploads) to access your WiGLE uploads on the website, or copy-paste the link below:
+<br>
+`https://wigle.net/uploads`
+<br>
+<br>
+Then, right-click on the relevant scan session and copy the link. Replace "kml" with "csv" in the link and press Enter.
+<br>
+The CSV file should then download.
+<br>
+<br>
+However, the issue with this alternative is that the reports lack detail.
+<br>
+For instance, the file does not distinguish between WPA2 Personal and Enterprise networks. Details regarding encryption algorithms are missing, as is information on WPS status.
+<br>
+<br>
+That is why it is preferable to export your CSV directly from the application.
+
 ## Legal notes
 This tool was developed solely for educational, analytical, and network security research purposes.
 <br>
