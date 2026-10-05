@@ -1,7 +1,7 @@
 # CSVs Analyzer for WiGLE for Android
 
 ## Optimization in progress!
-The tool still The tool still requires a few improvements.
+The tool still requires a few improvements.
 <br>
 Please avoid to import large files (300K+ lines) for now. This may cause loading and performance issues on your web browser.
 <br>
