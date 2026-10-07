@@ -149,7 +149,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
             <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-              {language === 'fr' ? 'Import de fichiers CSV' : 'CSV Files Import'}
+              {language === 'fr' ? 'Import de fichiers' : 'Files Import'}
             </h2>
           </div>
           {onOpenInstructions && (
