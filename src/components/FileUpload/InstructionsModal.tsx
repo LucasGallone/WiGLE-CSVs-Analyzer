@@ -98,7 +98,7 @@ export const InstructionsModal: React.FC<InstructionsModalProps> = ({ isOpen, on
                     </a>
                   </p>
                   <p>
-                    Faites ensuite un clic droit sur la session de scan concernée et copiez le lien. Remplacez "kml" par « csv » dans le copié et appuyez sur Entrée.
+                    Faites ensuite un clic droit sur la session de scan concernée et copiez le lien. Remplacez "kml" par "csv" dans le lien copié et appuyez sur Entrée.
                   </p>
                   <p>
                     Le téléchargement du fichier CSV devrait débuter.
