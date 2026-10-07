@@ -5,16 +5,6 @@
 
 > The screenshots are deliberately kept simple for privacy reasons, so as not to publicly display information related to personal networks. Discover the tool by yourself and try it now with one of your CSV files!
 
-## Optimization in progress!
-The tool still requires a few improvements.
-<br>
-Please avoid to import large files (300K+ lines) for now. This may cause loading and performance issues on your web browser.
-<br>
-<br>
-It was successfully tested with a 150,000 lines file, so long "runs" may be imported without issues.
-<br>
-Just don't import your entire database for now. :)
-
 ## Access the tool
 To access the tool, [click here.](https://lucasgallone.github.io/WiGLE-CSVs-Analyzer/)
 <br>
