@@ -110,7 +110,7 @@ export const NetworkHistoryModal: React.FC<NetworkHistoryModalProps> = ({
                   <p className="font-semibold">
                     {history.hasSsidChanged
                       ? language === 'fr'
-                        ? `Ce point d'accès a changé de nom SSID (${history.ssidTimeline.length} noms constatés).`
+                        ? `Ce point d'accès a changé de SSID (${history.ssidTimeline.length} noms constatés).`
                         : `This Access Point has changed its SSID (${history.ssidTimeline.length} distinct SSIDs recorded).`
                       : language === 'fr'
                       ? 'Aucun changement de SSID constaté pour ce point d’accès.'
@@ -118,8 +118,8 @@ export const NetworkHistoryModal: React.FC<NetworkHistoryModalProps> = ({
                   </p>
                   <p className="text-[11px] opacity-80 mt-0.5">
                     {language === 'fr'
-                      ? 'L\'adresse MAC (BSSID) est restée constante, mais l\'identifiant SSID de diffusion a été modifié.'
-                      : 'The MAC address (BSSID) remained identical while the broadcast SSID identifier was modified.'}
+                      ? 'Le SSID n\'a pas évolué au cours du temps. Seul le type de chiffrement a été modifié.'
+                      : 'The SSID has not changed over time. However, a change in encryption was observed.'}
                   </p>
                 </div>
               </div>
@@ -140,11 +140,13 @@ export const NetworkHistoryModal: React.FC<NetworkHistoryModalProps> = ({
                       <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-1.5 shadow-2xs">
                         <div className="flex items-center justify-between text-xs flex-wrap gap-1">
                           <span className="font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider text-[10px]">
-                            {isFirst
-                              ? language === 'fr'
+                            {language === 'fr'
+                              ? isFirst
                                 ? '1ère constatation'
-                                : '1st Observation'
-                              : `${idx + 1}${language === 'fr' ? 'e constatation' : 'th Observation'}`}
+                                : `${idx + 1}ème constatation`
+                              : isFirst
+                              ? '1st Observation'
+                              : `${idx + 1}${idx + 1 === 2 ? 'nd' : idx + 1 === 3 ? 'rd' : 'th'} Observation`}
                           </span>
                           <span className="text-[11px] font-sans font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1">
                             <Calendar className="w-3 h-3 text-slate-400" />
@@ -168,7 +170,7 @@ export const NetworkHistoryModal: React.FC<NetworkHistoryModalProps> = ({
                         <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-slate-800/80 text-[11px] text-slate-500 dark:text-slate-400 font-sans">
                           <span className="flex items-center gap-1">
                             <Layers className="w-3 h-3 text-slate-400" />
-                            {item.count} {language === 'fr' ? 'détections sous ce nom' : 'detections with this name'}
+                            {item.count} {language === 'fr' ? (item.count > 1 ? 'détections sous ce nom' : 'détection sous ce nom') : (item.count > 1 ? 'detections with this name' : 'detection with this name')}
                           </span>
                           {item.lastSeen && item.lastSeen !== item.firstSeen && (
                             <span className="text-[10px]">
@@ -226,11 +228,13 @@ export const NetworkHistoryModal: React.FC<NetworkHistoryModalProps> = ({
                       <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 space-y-1.5 shadow-2xs">
                         <div className="flex items-center justify-between text-xs flex-wrap gap-1">
                           <span className="font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider text-[10px]">
-                            {isFirst
-                              ? language === 'fr'
+                            {language === 'fr'
+                              ? isFirst
                                 ? '1ère constatation'
-                                : '1st Observation'
-                              : `${idx + 1}${language === 'fr' ? 'ème constatation' : 'th Observation'}`}
+                                : `${idx + 1}ème constatation`
+                              : isFirst
+                              ? '1st Observation'
+                              : `${idx + 1}${idx + 1 === 2 ? 'nd' : idx + 1 === 3 ? 'rd' : 'th'} Observation`}
                           </span>
                           <span className="text-[11px] font-sans font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1">
                             <Calendar className="w-3 h-3 text-slate-400" />
@@ -270,7 +274,7 @@ export const NetworkHistoryModal: React.FC<NetworkHistoryModalProps> = ({
                         <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-slate-800/80 text-[11px] text-slate-500 dark:text-slate-400 font-sans">
                           <span className="flex items-center gap-1">
                             <Layers className="w-3 h-3 text-slate-400" />
-                            {item.count} {language === 'fr' ? 'détections avec ce chiffrement' : 'detections with this encryption'}
+                            {item.count} {language === 'fr' ? (item.count > 1 ? 'détections avec ce chiffrement' : 'détection avec ce chiffrement') : (item.count > 1 ? 'detections with this encryption' : 'detection with this encryption')}
                           </span>
                           {item.lastSeen && item.lastSeen !== item.firstSeen && (
                             <span className="text-[10px]">

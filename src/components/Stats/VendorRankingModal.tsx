@@ -95,7 +95,8 @@ export const VendorRankingModal: React.FC<VendorRankingModalProps> = ({
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 {allVendors.length} {language === 'fr' ? 'fabricants détectés sur' : 'manufacturers detected across'}{' '}
-                <span className="font-bold text-slate-700 dark:text-slate-300 font-sans">{totalUniqueAPs}</span> APs
+                <span className="font-bold text-slate-700 dark:text-slate-300 font-sans">{totalUniqueAPs}</span>{' '}
+                {language === 'fr' ? (totalUniqueAPs > 1 ? 'réseaux' : 'réseau') : (totalUniqueAPs > 1 ? 'APs' : 'AP')}
               </p>
             </div>
           </div>
@@ -195,8 +196,8 @@ export const VendorRankingModal: React.FC<VendorRankingModalProps> = ({
                           {language === 'fr' && isOther ? 'Autres fabricants' : item.vendor}
                         </span>
                         <div className="flex items-center gap-2 font-sans shrink-0">
-                          <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                            {item.count} APs
+                          <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 font-sans">
+                            {item.count} {language === 'fr' ? (item.count > 1 ? 'réseaux' : 'réseau') : (item.count > 1 ? 'APs' : 'AP')}
                           </span>
                           <span className="text-[11px] font-black text-indigo-600 dark:text-indigo-400 min-w-[36px] text-right">
                             {item.percentageFormatted}

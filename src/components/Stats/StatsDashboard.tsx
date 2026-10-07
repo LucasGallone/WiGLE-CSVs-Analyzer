@@ -45,6 +45,36 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
   const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
   const stats = useMemo(() => calculateStats(session, filteredAps), [session, filteredAps]);
 
+  if (!session) {
+    return (
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center text-slate-500 dark:text-slate-400 shadow-sm transition-colors">
+        <Wifi className="w-12 h-12 text-slate-400 dark:text-slate-600 mx-auto mb-3" />
+        <p className="font-semibold text-slate-700 dark:text-slate-300">
+          {language === 'fr' ? 'Aucune donnée de session disponible.' : 'No session data available.'}
+        </p>
+        <p className="text-xs mt-1">
+          {language === 'fr' ? 'Importez un fichier CSV complet pour générer les analyses.' : 'Import a complete CSV file to generate comprehensive analytics.'}
+        </p>
+      </div>
+    );
+  }
+
+  if (filteredAps && filteredAps.length === 0) {
+    return (
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center text-slate-500 dark:text-slate-400 shadow-sm transition-colors flex flex-col items-center justify-center">
+        <BarChart3 className="w-12 h-12 text-amber-500 mx-auto mb-3" />
+        <p className="font-bold text-slate-800 dark:text-slate-200 text-sm">
+          {language === 'fr' ? 'Aucun réseau ne correspond à vos filtres actifs.' : 'No networks match your active filters.'}
+        </p>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md">
+          {language === 'fr'
+            ? 'Veuillez modifier ou réinitialiser vos critères de recherche pour afficher les statistiques.'
+            : 'Please modify or reset your active filters to display statistics.'}
+        </p>
+      </div>
+    );
+  }
+
   if (!stats) {
     return (
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center text-slate-500 dark:text-slate-400 shadow-sm transition-colors">
@@ -166,7 +196,7 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
               <span>{t('dashboard.securityBreakdown')}</span>
               {(isSecurityFiltered || isFilterActive) && (
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-slate-950 uppercase tracking-wide">
-                  {language === 'fr' ? 'FILTRÉ' : 'FILTERED'}
+                  {language === 'fr' ? 'FILTRAGE ACTIF' : 'FILTERED'}
                 </span>
               )}
             </div>
@@ -297,7 +327,7 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
               <span>{t('dashboard.vendorBreakdown')}</span>
               {(isVendorFiltered || isFilterActive) && (
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-slate-950 uppercase tracking-wide">
-                  {language === 'fr' ? 'FILTRÉ' : 'FILTERED'}
+                  {language === 'fr' ? 'FILTRAGE ACTIF' : 'FILTERED'}
                 </span>
               )}
             </div>

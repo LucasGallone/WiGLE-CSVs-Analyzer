@@ -112,6 +112,9 @@ export interface ProcessedAccessPoint {
   sourceFiles: string[];
   isWigleOnly?: boolean;
   hasCompleteDetails?: boolean;
+  isModified?: boolean;
+  hasSsidChanged?: boolean;
+  hasSecurityChanged?: boolean;
 }
 
 export interface FileMetadata {
@@ -162,4 +165,5 @@ export interface FilterState {
   isCipherFilterActive?: boolean; // Toggle to activate/deactivate algorithm filtering
   onlyOpenNetworks: boolean;
   onlyWpa3: boolean;
+  onlyModifiedNetworks?: boolean;
 }

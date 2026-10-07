@@ -196,8 +196,17 @@ function classifyApAdvancedCipher(ap: ProcessedAccessPoint, secType: string): { 
   }
 
   // GCMP ciphers
-  const hasGcmp256 = mode.includes('GCMP-256');
-  const hasGcmp128 = mode.includes('GCMP-128') || (mode.includes('GCMP') && !hasGcmp256);
+  const isWpa3Enterprise192 =
+    mode.includes('SUITE-B') ||
+    mode.includes('SUITE_B') ||
+    mode.includes('EAP/SHA384') ||
+    mode.includes('EAP-SHA384') ||
+    mode.includes('SHA384') ||
+    mode.includes('EAP-SUITE-B-192') ||
+    secType === 'WPA3_ENTERPRISE';
+
+  const hasGcmp256 = mode.includes('GCMP-256') || (isWpa3Enterprise192 && mode.includes('GCMP'));
+  const hasGcmp128 = mode.includes('GCMP-128') || (mode.includes('GCMP') && !hasGcmp256 && !isWpa3Enterprise192);
   if (hasGcmp256 && hasGcmp128) {
     return { key: 'GCMP_DUAL', labelFr: 'GCMP (128 & 256 bits)', labelEn: 'GCMP (128 & 256-bit)' };
   }
@@ -580,14 +589,39 @@ export function calculateStats(session: ScanSessionData | null, filteredAps?: Pr
 }
 
 /**
- * Formats standard ISO/WiGLE timestamp (YYYY-MM-DD HH:mm:ss) into European format (DD/MM/YYYY HH:mm:ss)
+ * Universally formats any timestamp (ISO YYYY-MM-DD, US MM/DD/YYYY, EU DD/MM/YYYY) into European format (DD/MM/YYYY HH:mm:ss)
  */
 export function formatToEuropeanDate(dateStr?: string | null): string {
   if (!dateStr || typeof dateStr !== 'string') return '-';
-  const match = dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}:\d{2}(?::\d{2})?))?/);
-  if (match) {
-    const [, yyyy, mm, dd, time] = match;
-    return time ? `${dd}/${mm}/${yyyy} ${time}` : `${dd}/${mm}/${yyyy}`;
+  const trimmed = dateStr.trim();
+  if (!trimmed) return '-';
+
+  // 1. ISO format: YYYY-MM-DD or YYYY/MM/DD (e.g. 2026-09-18 15:08:26)
+  const isoMatch = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}:\d{2}(?::\d{2})?))?/);
+  if (isoMatch) {
+    const [, yyyy, mm, dd, time] = isoMatch;
+    const padDd = dd.padStart(2, '0');
+    const padMm = mm.padStart(2, '0');
+    return time ? `${padDd}/${padMm}/${yyyy} ${time}` : `${padDd}/${padMm}/${yyyy}`;
   }
+
+  // 2. US or EU slash format: MM/DD/YYYY or DD/MM/YYYY (e.g. 09/18/2026 15:08:26)
+  const slashMatch = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[T\s](\d{1,2}:\d{2}(?::\d{2})?))?/);
+  if (slashMatch) {
+    const [, p1, p2, yyyy, time] = slashMatch;
+    const num1 = parseInt(p1, 10);
+    const num2 = parseInt(p2, 10);
+    let day = num2;
+    let month = num1;
+    if (num1 > 12) {
+      // Already DD/MM/YYYY
+      day = num1;
+      month = num2;
+    }
+    const padDay = String(day).padStart(2, '0');
+    const padMonth = String(month).padStart(2, '0');
+    return time ? `${padDay}/${padMonth}/${yyyy} ${time}` : `${padDay}/${padMonth}/${yyyy}`;
+  }
+
   return dateStr;
 }

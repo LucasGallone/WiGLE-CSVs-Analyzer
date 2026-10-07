@@ -89,7 +89,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Dashboard Sections
     'dashboard.statsTitle': 'Statistiques & Synthèse des réseaux détectés',
-    'dashboard.filterActive': 'FILTRÉ',
+    'dashboard.filterActive': 'FILTRAGE ACTIF',
     'dashboard.mapTitle': 'Carte Interactive',
     'dashboard.tableTitle': 'Liste des réseaux détectés',
     'dashboard.securityBreakdown': 'Répartition des types de chiffrement',

@@ -12,6 +12,7 @@ import {
   refreshVendors,
   isWigleModel,
 } from './utils/csvParser';
+import { analyzeNetworkHistory } from './utils/historyUtils';
 import { loadCustomOuiDatabase } from './data/ouiDatabase';
 import { ThemeProvider } from './context/ThemeContext';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
@@ -22,6 +23,7 @@ import { NetworkTable } from './components/NetworkList/NetworkTable';
 import { StatsDashboard } from './components/Stats/StatsDashboard';
 import { NetworkDetailModal } from './components/Inspector/NetworkDetailModal';
 import { OuiManagerModal } from './components/OuiManager/OuiManagerModal';
+import { InstructionsModal } from './components/FileUpload/InstructionsModal';
 import {
   Map,
   BarChart2,
@@ -35,6 +37,7 @@ import {
   LogOut,
   Loader2,
   AlertCircle,
+  HelpCircle,
 } from 'lucide-react';
 
 function AppContent() {
@@ -49,6 +52,7 @@ function AppContent() {
   const [inspectingAp, setInspectingAp] = useState<ProcessedAccessPoint | null>(null);
   const [isOuiModalOpen, setIsOuiModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isInstructionsModalOpen, setIsInstructionsModalOpen] = useState(false);
 
   const initialFilters: FilterState = {
     searchQuery: '',
@@ -66,6 +70,7 @@ function AppContent() {
     isCipherFilterActive: false,
     onlyOpenNetworks: false,
     onlyWpa3: false,
+    onlyModifiedNetworks: false,
   };
 
   const [filters, setFilters] = useState<FilterState>(initialFilters);
@@ -111,12 +116,18 @@ function AppContent() {
   // High-performance streaming loader for large files (+100MB) without freezing the UI
   const handleLoadFiles = async (files: File[]) => {
     if (!files || files.length === 0) return;
+    // Strictly restrict imported files exclusively to CSV
+    const csvFiles = files.filter(
+      (file) => file.name.toLowerCase().endsWith('.csv') || file.type === 'text/csv'
+    );
+    if (csvFiles.length === 0) return;
+
     setIsProcessing(true);
-    setProcessingFileCount(files.length);
+    setProcessingFileCount(csvFiles.length);
 
     try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+      for (let i = 0; i < csvFiles.length; i++) {
+        const file = csvFiles[i];
         setCurrentProcessingFileName(file.name);
         setProgressInfo({
           fileName: file.name,
@@ -131,7 +142,18 @@ function AppContent() {
           file.name,
           customOuiMap,
           (progress) => {
-            setProgressInfo(progress);
+            setProgressInfo((prev) => {
+              if (prev && (prev.percent ?? 0) >= 100) {
+                return {
+                  ...prev,
+                  fileName: progress.fileName || prev.fileName,
+                  rowsParsed: Math.max(prev.rowsParsed, progress.rowsParsed),
+                  uniqueApsCount: Math.max(prev.uniqueApsCount, progress.uniqueApsCount),
+                  percent: 100,
+                };
+              }
+              return progress;
+            });
           }
         );
 
@@ -142,7 +164,8 @@ function AppContent() {
             parsed.header,
             parsed.rawRecords,
             file.name,
-            customOuiMap
+            customOuiMap,
+            parsed.accessPoints
           );
         });
 
@@ -161,36 +184,62 @@ function AppContent() {
     }
   };
 
-  // Legacy CSV Loader (fallback for raw string content)
-  const handleLoadCsv = (
+  // Offload 100% of CSV imports to dedicated Web Worker via parseWigleCsvFileStreaming
+  const handleLoadCsv = async (
     csvContent: string,
     fileName: string,
     isAppend: boolean,
     totalFilesCount?: number
   ) => {
+    // Strictly restrict imported files exclusively to CSV
+    if (!fileName.toLowerCase().endsWith('.csv')) {
+      return;
+    }
+
     setIsProcessing(true);
     setProcessingFileCount(totalFilesCount || 1);
     setCurrentProcessingFileName(fileName);
-    setTimeout(() => {
-      try {
-        const { header, rawRecords } = parseWigleCsvString(csvContent, fileName, customOuiMap);
-        setSession((prevSession) => {
-          const baseSession = isAppend ? prevSession : null;
-          return mergeScanSessions(
-            baseSession,
-            header,
-            rawRecords,
-            fileName,
-            customOuiMap
-          );
-        });
-        setIsImportModalOpen(false);
-        setSelectedAp(null);
-      } finally {
-        setIsProcessing(false);
-        setCurrentProcessingFileName('');
-      }
-    }, 60);
+    try {
+      const file = new File([csvContent], fileName, { type: 'text/csv' });
+      const parsed = await parseWigleCsvFileStreaming(
+        file,
+        fileName,
+        customOuiMap,
+        (progress) => {
+          setProgressInfo((prev) => {
+            if (prev && (prev.percent ?? 0) >= 100) {
+              return {
+                ...prev,
+                fileName: progress.fileName || prev.fileName,
+                rowsParsed: Math.max(prev.rowsParsed, progress.rowsParsed),
+                uniqueApsCount: Math.max(prev.uniqueApsCount, progress.uniqueApsCount),
+                percent: 100,
+              };
+            }
+            return progress;
+          });
+        }
+      );
+      setSession((prevSession) => {
+        const baseSession = isAppend ? prevSession : null;
+        return mergeScanSessions(
+          baseSession,
+          parsed.header,
+          parsed.rawRecords,
+          fileName,
+          customOuiMap,
+          parsed.accessPoints
+        );
+      });
+      setIsImportModalOpen(false);
+      setSelectedAp(null);
+    } catch (err) {
+      console.error('Error importing CSV via Worker:', err);
+    } finally {
+      setIsProcessing(false);
+      setProgressInfo(null);
+      setCurrentProcessingFileName('');
+    }
   };
 
   const handleClearSession = () => {
@@ -216,6 +265,59 @@ function AppContent() {
       // 2. Direct Security / Encryption
       if (filters.securityFilter.length > 0 && !filters.securityFilter.includes('ALL')) {
         if (!filters.securityFilter.includes(ap.security.type)) return false;
+      }
+
+      // 2b. Dynamic Cipher Algorithm Filter
+      if (
+        filters.isCipherFilterActive &&
+        filters.cipherAlgorithmFilter &&
+        filters.cipherAlgorithmFilter !== 'ALL'
+      ) {
+        const target = filters.cipherAlgorithmFilter.toUpperCase();
+        const rawAuth = (ap.authMode || '').toUpperCase();
+        const ciphers = (ap.security.ciphers || []).map((c) => c.toUpperCase());
+        const cipherLabel = (ap.security.cipherLabel || '').toUpperCase();
+        const isWpa3Ent192 =
+          rawAuth.includes('SUITE-B') ||
+          rawAuth.includes('EAP/SHA384') ||
+          rawAuth.includes('EAP-SHA384') ||
+          rawAuth.includes('SHA384') ||
+          ap.security.type === 'WPA3_ENTERPRISE';
+
+        let match = false;
+
+        if (target === 'GCMP-256') {
+          match =
+            rawAuth.includes('GCMP-256') ||
+            (isWpa3Ent192 && rawAuth.includes('GCMP')) ||
+            ciphers.some((c) => c.includes('GCMP-256') || c.includes('256')) ||
+            (cipherLabel.includes('GCMP') && (cipherLabel.includes('256') || isWpa3Ent192));
+        } else if (target === 'GCMP-128') {
+          match =
+            (rawAuth.includes('GCMP-128') || (rawAuth.includes('GCMP') && !rawAuth.includes('256') && !isWpa3Ent192)) ||
+            ciphers.some((c) => c.includes('GCMP-128') || (c.includes('GCMP') && !c.includes('256') && !isWpa3Ent192)) ||
+            (cipherLabel.includes('GCMP') && !cipherLabel.includes('256') && !isWpa3Ent192);
+        } else if (target === 'CCMP-256') {
+          match =
+            rawAuth.includes('CCMP-256') ||
+            (rawAuth.includes('CCMP') && rawAuth.includes('256')) ||
+            ciphers.some((c) => c.includes('CCMP-256') || c.includes('256')) ||
+            (cipherLabel.includes('CCMP') && cipherLabel.includes('256'));
+        } else if (target === 'CCMP') {
+          match =
+            (rawAuth.includes('CCMP') && !rawAuth.includes('256')) ||
+            rawAuth.includes('AES') ||
+            ciphers.some((c) => c.includes('CCMP') || c.includes('AES')) ||
+            cipherLabel.includes('CCMP') ||
+            cipherLabel.includes('AES');
+        } else {
+          match =
+            rawAuth.includes(target) ||
+            ciphers.some((c) => c.includes(target)) ||
+            cipherLabel.includes(target);
+        }
+
+        if (!match) return false;
       }
 
       // 3. Channel & Band filter (Unified)
@@ -299,6 +401,11 @@ function AppContent() {
       if (filters.onlyOpenNetworks && ap.security.isSecure) return false;
       if (filters.onlyWpa3 && ap.security.type !== 'WPA3') return false;
 
+      // 11. Modified Networks Only (O(1) pre-calculated status)
+      if (filters.onlyModifiedNetworks) {
+        if (!(ap.isModified ?? (ap.hasSsidChanged || ap.hasSecurityChanged))) return false;
+      }
+
       return true;
     });
   }, [session, filters]);
@@ -317,7 +424,8 @@ function AppContent() {
       (filters.ouiFilter && filters.ouiFilter !== 'ALL') ||
       filters.locationFilter !== null ||
       filters.onlyOpenNetworks ||
-      filters.onlyWpa3
+      filters.onlyWpa3 ||
+      filters.onlyModifiedNetworks
     );
   }, [filters]);
 
@@ -378,6 +486,7 @@ function AppContent() {
                 totalAps={0}
                 totalRecords={0}
                 isInitialModal={true}
+                onOpenInstructions={() => setIsInstructionsModalOpen(true)}
               />
             </div>
           </div>
@@ -537,7 +646,14 @@ function AppContent() {
                 <div className="flex items-center gap-2">
                   <Map className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
                   <h2 className="text-base font-bold text-slate-900 dark:text-white">
-                    {t('dashboard.mapTitle')} ({filteredAps.length} {language === 'fr' ? 'réseaux cartographiés' : 'networks mapped'})
+                    {t('dashboard.mapTitle')} ({filteredAps.length}{' '}
+                    {language === 'fr'
+                      ? filteredAps.length <= 1
+                        ? 'réseau cartographié'
+                        : 'réseaux cartographiés'
+                      : filteredAps.length <= 1
+                      ? 'network mapped'
+                      : 'networks mapped'})
                   </h2>
                 </div>
               </div>
@@ -561,6 +677,7 @@ function AppContent() {
                 isWigleDevice={isWigleDevice}
                 totalGpsPointsCount={totalGpsPointsCount}
                 onResetFilters={() => setFilters(initialFilters)}
+                isOnlyModifiedFilterActive={Boolean(filters.onlyModifiedNetworks)}
               />
             </section>
 
@@ -576,7 +693,8 @@ function AppContent() {
               </div>
 
               <NetworkTable
-                accessPoints={session.accessPoints}
+                accessPoints={filteredAps}
+                allAccessPoints={session.accessPoints}
                 selectedAp={selectedAp}
                 onSelectAp={(ap) => setSelectedAp(ap)}
                 onInspectAp={(ap) => setInspectingAp(ap)}
@@ -595,16 +713,30 @@ function AppContent() {
       {isImportModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
           <div className="relative w-full max-w-3xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800 gap-2">
               <h3 className="text-base font-bold text-slate-900 dark:text-white">
                 {t('header.import')}
               </h3>
-              <button
-                onClick={() => setIsImportModalOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsInstructionsModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-50 dark:bg-cyan-950/70 border border-cyan-300 dark:border-cyan-800 hover:bg-cyan-100 dark:hover:bg-cyan-900/80 text-cyan-800 dark:text-cyan-200 text-xs font-semibold shadow-xs transition-all cursor-pointer"
+                >
+                  <HelpCircle className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                  <span>
+                    {language === 'fr'
+                      ? 'Instructions pour récupérer vos fichiers CSV'
+                      : 'Instructions for collecting your CSV files'}
+                  </span>
+                </button>
+                <button
+                  onClick={() => setIsImportModalOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <FileDropzone
@@ -658,6 +790,12 @@ function AppContent() {
         />
       )}
 
+      {/* CSV Collection Instructions Modal */}
+      <InstructionsModal
+        isOpen={isInstructionsModalOpen}
+        onClose={() => setIsInstructionsModalOpen(false)}
+      />
+
       {/* File Processing Screen / Modal Overlay with Real-Time Progress Feedback */}
       {isProcessing && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
@@ -667,7 +805,11 @@ function AppContent() {
             </div>
             <div className="w-full space-y-2">
               <h3 className="text-lg font-black text-slate-900 dark:text-white">
-                {language === 'fr'
+                {progressInfo && (progressInfo.percent ?? 0) >= 99
+                  ? language === 'fr'
+                    ? 'Import terminé. Indexation en cours...'
+                    : 'Import complete. Indexing networks...'
+                  : language === 'fr'
                   ? processingFileCount > 1
                     ? 'Traitement des fichiers en cours...'
                     : 'Traitement du fichier en cours...'
@@ -681,7 +823,11 @@ function AppContent() {
                 </p>
               )}
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                {language === 'fr'
+                {progressInfo && (progressInfo.percent ?? 0) >= 99
+                  ? language === 'fr'
+                    ? 'Veuillez patienter encore quelques secondes.'
+                    : 'Please wait a few more seconds.'
+                  : language === 'fr'
                   ? 'Veuillez patienter. Le temps de chargement varie selon la taille du fichier.'
                   : 'Please wait. Loading time varies depending on the file size.'}
               </p>
@@ -694,14 +840,14 @@ function AppContent() {
                       {progressInfo.rowsParsed.toLocaleString()} {language === 'fr' ? 'lignes analysées' : 'scanned rows'}
                     </span>
                     <span className="text-cyan-600 dark:text-cyan-400 font-bold font-sans">
-                      {progressInfo.uniqueApsCount.toLocaleString()} {language === 'fr' ? 'APs uniques' : 'unique APs'}
+                      {progressInfo.uniqueApsCount.toLocaleString()} {language === 'fr' ? (progressInfo.uniqueApsCount > 1 ? 'réseaux uniques' : 'réseau unique') : (progressInfo.uniqueApsCount > 1 ? 'unique APs' : 'unique AP')}
                     </span>
                   </div>
 
                   <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden border border-slate-200 dark:border-slate-700">
                     <div
-                      className="h-full bg-gradient-to-r from-indigo-500 to-cyan-500 transition-all duration-200"
-                      style={{ width: `${Math.max(5, progressInfo.percent || 10)}%` }}
+                      className="h-full bg-gradient-to-r from-indigo-500 to-cyan-500 transition-all duration-300 ease-out"
+                      style={{ width: `${Math.max(2, Math.min(100, progressInfo.percent ?? 0))}%` }}
                     />
                   </div>
                 </div>

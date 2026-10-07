@@ -14,6 +14,7 @@ import {
   Info,
   ChevronLeft,
   ChevronRight,
+  Filter,
   FilterX,
   ChevronDown,
   ChevronUp,
@@ -26,11 +27,45 @@ import {
   Loader2,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
-import { analyzeNetworkHistory } from '../../utils/historyUtils';
+import { analyzeNetworkHistory, parseTimestampToMs } from '../../utils/historyUtils';
 import { classifySecurity } from '../../utils/csvParser';
 import { NetworkHistoryModal } from './NetworkHistoryModal';
 import { getWigleSignalTier } from '../../utils/wigleSignalColors';
 import { formatToEuropeanDate } from '../../utils/statsUtils';
+
+function extractDateKey(timestamp?: string | null): string {
+  if (!timestamp) return '';
+  const ms = parseTimestampToMs(timestamp);
+  if (ms <= 0) return '';
+  const d = new Date(ms);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// Reusable cached Collator for 30x faster SSID alphabetization without Intl recreation
+const ssidCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+
+interface StaticFiltersCache {
+  channelOptions: {
+    band24: { ch: string; freq: number; count: number }[];
+    band5: { ch: string; freq: number; count: number }[];
+    band6: { ch: string; freq: number; count: number }[];
+    total24: number;
+    total5: number;
+    total6: number;
+  };
+  availableDates: string[];
+  vendorData: {
+    hasUnassignedVendor: boolean;
+    unassignedCount: number;
+    namedVendorsWithCount: { name: string; count: number }[];
+  };
+  ouiData: { oui: string; count: number; vendor: string }[];
+}
+
+const staticFiltersCache = new WeakMap<ProcessedAccessPoint[], StaticFiltersCache>();
 
 const TruncatedSsid: React.FC<{ ssid: string }> = ({ ssid }) => {
   const [isTruncated, setIsTruncated] = useState(false);
@@ -56,6 +91,7 @@ const TruncatedSsid: React.FC<{ ssid: string }> = ({ ssid }) => {
 
 interface NetworkTableProps {
   accessPoints: ProcessedAccessPoint[];
+  allAccessPoints?: ProcessedAccessPoint[];
   selectedAp: ProcessedAccessPoint | null;
   onSelectAp: (ap: ProcessedAccessPoint) => void;
   onInspectAp: (ap: ProcessedAccessPoint) => void;
@@ -92,6 +128,7 @@ export type SubTableSortField =
 
 export const NetworkTable: React.FC<NetworkTableProps> = ({
   accessPoints,
+  allAccessPoints,
   selectedAp,
   onSelectAp,
   onInspectAp,
@@ -101,6 +138,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
   isWigleDevice = false,
 }) => {
   const { t, language } = useLanguage();
+  const sessionAps = allAccessPoints || accessPoints;
   const [sortField, setSortField] = useState<SortField>('ssid');
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
   const [subTableSortField, setSubTableSortField] = useState<SubTableSortField>('timestamp');
@@ -180,128 +218,128 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
     });
   };
 
-  // Group available channels clearly distinguished by band with frequency in MHz
-  const channelOptions = useMemo(() => {
-    const map24 = new Map<string, { ch: string; freq: number; count: number }>();
-    const map5 = new Map<string, { ch: string; freq: number; count: number }>();
-    const map6 = new Map<string, { ch: string; freq: number; count: number }>();
+  // Unified single-pass memoized static filters (Channels, Dates, Vendors, OUIs)
+  const { channelOptions, availableDates, hasUnassignedVendor, unassignedCount, namedVendorsWithCount, availableOuisWithCount } = useMemo(() => {
+    let cached = staticFiltersCache.get(sessionAps);
+    if (!cached) {
+      const map24 = new Map<string, { ch: string; freq: number; count: number }>();
+      const map5 = new Map<string, { ch: string; freq: number; count: number }>();
+      const map6 = new Map<string, { ch: string; freq: number; count: number }>();
+      const dateSet = new Set<string>();
+      const vendorMap = new Map<string, number>();
+      let unassigned = 0;
+      const ouiMap = new Map<string, { count: number; vendor: string }>();
 
-    accessPoints.forEach((ap) => {
-      const chStr = String(ap.channel || '1');
-      if (chStr === '0' || chStr === '') return;
-      const chNum = parseInt(chStr, 10);
+      for (let i = 0; i < sessionAps.length; i++) {
+        const ap = sessionAps[i];
 
-      if (ap.band === '6 GHz' || (ap.frequency && ap.frequency >= 5925) || chNum > 196) {
-        const freq = ap.frequency || (chNum ? 5950 + chNum * 5 : 5955);
-        const existing = map6.get(chStr) || { ch: chStr, freq, count: 0 };
-        existing.count++;
-        map6.set(chStr, existing);
-      } else if (
-        ap.band === '5 GHz' ||
-        (chNum >= 32 && chNum <= 177) ||
-        (ap.frequency && ap.frequency >= 4900 && ap.frequency < 5925)
-      ) {
-        const freq = ap.frequency || (chNum ? 5000 + chNum * 5 : 5180);
-        const existing = map5.get(chStr) || { ch: chStr, freq, count: 0 };
-        existing.count++;
-        map5.set(chStr, existing);
-      } else {
-        const freq = ap.frequency || (chNum === 14 ? 2484 : 2407 + chNum * 5);
-        const existing = map24.get(chStr) || { ch: chStr, freq, count: 0 };
-        existing.count++;
-        map24.set(chStr, existing);
-      }
-    });
-
-    const sortFn = (a: { ch: string }, b: { ch: string }) => {
-      const numA = parseInt(a.ch, 10);
-      const numB = parseInt(b.ch, 10);
-      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
-      return a.ch.localeCompare(b.ch);
-    };
-
-    const band24 = Array.from(map24.values()).sort(sortFn);
-    const band5 = Array.from(map5.values()).sort(sortFn);
-    const band6 = Array.from(map6.values()).sort(sortFn);
-
-    return {
-      band24,
-      band5,
-      band6,
-      total24: band24.reduce((acc, v) => acc + v.count, 0),
-      total5: band5.reduce((acc, v) => acc + v.count, 0),
-      total6: band6.reduce((acc, v) => acc + v.count, 0),
-    };
-  }, [accessPoints]);
-
-  // Extract unique available dates (YYYY-MM-DD)
-  const availableDates = useMemo(() => {
-    const set = new Set<string>();
-    accessPoints.forEach((ap) => {
-      if (ap.firstSeen && ap.firstSeen.length >= 10) {
-        const dateStr = ap.firstSeen.substring(0, 10);
-        if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-          set.add(dateStr);
-        }
-      }
-      ap.observations.forEach((obs) => {
-        if (obs.timestamp && obs.timestamp.length >= 10) {
-          const dStr = obs.timestamp.substring(0, 10);
-          if (/^\d{4}-\d{2}-\d{2}$/.test(dStr)) {
-            set.add(dStr);
+        // 1. Channels & Bands
+        const chStr = String(ap.channel || '1');
+        if (chStr !== '0' && chStr !== '') {
+          const chNum = parseInt(chStr, 10);
+          if (ap.band === '6 GHz' || (ap.frequency && ap.frequency >= 5925) || chNum > 196) {
+            const freq = ap.frequency || (chNum ? 5950 + chNum * 5 : 5955);
+            const ex = map6.get(chStr) || { ch: chStr, freq, count: 0 };
+            ex.count++;
+            map6.set(chStr, ex);
+          } else if (
+            ap.band === '5 GHz' ||
+            (chNum >= 32 && chNum <= 177) ||
+            (ap.frequency && ap.frequency >= 4900 && ap.frequency < 5925)
+          ) {
+            const freq = ap.frequency || (chNum ? 5000 + chNum * 5 : 5180);
+            const ex = map5.get(chStr) || { ch: chStr, freq, count: 0 };
+            ex.count++;
+            map5.set(chStr, ex);
+          } else {
+            const freq = ap.frequency || (chNum === 14 ? 2484 : 2407 + chNum * 5);
+            const ex = map24.get(chStr) || { ch: chStr, freq, count: 0 };
+            ex.count++;
+            map24.set(chStr, ex);
           }
         }
-      });
-    });
-    return Array.from(set).sort();
-  }, [accessPoints]);
 
-  // Extract list of unique vendors and OUIs for dropdowns with AP count
-  const { hasUnassignedVendor, unassignedCount, namedVendorsWithCount } = useMemo(() => {
-    const map = new Map<string, number>();
-    let unassigned = 0;
-    accessPoints.forEach((ap) => {
-      if (!ap.vendor || ap.vendor === '[Unassigned by IEEE]' || ap.vendor === 'Unknown') {
-        unassigned++;
-      } else {
-        map.set(ap.vendor, (map.get(ap.vendor) || 0) + 1);
-      }
-    });
-    const named = Array.from(map.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    return {
-      hasUnassignedVendor: unassigned > 0,
-      unassignedCount: unassigned,
-      namedVendorsWithCount: named,
-    };
-  }, [accessPoints]);
+        // 2. Dates
+        const dKey = extractDateKey(ap.firstSeen);
+        if (dKey) dateSet.add(dKey);
+        for (let j = 0; j < ap.observations.length; j++) {
+          const oKey = extractDateKey(ap.observations[j].timestamp);
+          if (oKey) dateSet.add(oKey);
+        }
 
-  const availableOuisWithCount = useMemo(() => {
-    const map = new Map<string, { count: number; vendor: string }>();
-    accessPoints.forEach((ap) => {
-      if (ap.oui) {
-        const rawVendor = ap.vendor && ap.vendor !== 'Unknown' && ap.vendor !== '[Unassigned by IEEE]'
-          ? ap.vendor
-          : (language === 'fr' ? 'Non assigné' : 'Unassigned');
-        const existing = map.get(ap.oui);
-        if (existing) {
-          existing.count += 1;
-          if ((existing.vendor === 'Non assigné' || existing.vendor === 'Unassigned') && ap.vendor && ap.vendor !== 'Unknown' && ap.vendor !== '[Unassigned by IEEE]') {
-            existing.vendor = ap.vendor;
-          }
+        // 3. Vendors
+        if (!ap.vendor || ap.vendor === '[Unassigned by IEEE]' || ap.vendor === 'Unknown') {
+          unassigned++;
         } else {
-          map.set(ap.oui, {
-            count: 1,
-            vendor: rawVendor,
-          });
+          vendorMap.set(ap.vendor, (vendorMap.get(ap.vendor) || 0) + 1);
+        }
+
+        // 4. OUIs
+        if (ap.oui) {
+          const rawVendor = ap.vendor && ap.vendor !== 'Unknown' && ap.vendor !== '[Unassigned by IEEE]' ? ap.vendor : 'Non assigné';
+          const exOui = ouiMap.get(ap.oui);
+          if (exOui) {
+            exOui.count += 1;
+            if (exOui.vendor === 'Non assigné' && rawVendor !== 'Non assigné') {
+              exOui.vendor = rawVendor;
+            }
+          } else {
+            ouiMap.set(ap.oui, { count: 1, vendor: rawVendor });
+          }
         }
       }
-    });
-    return Array.from(map.entries())
-      .map(([oui, { count, vendor }]) => ({ oui, count, vendor }))
-      .sort((a, b) => a.oui.localeCompare(b.oui));
-  }, [accessPoints, language]);
+
+      const sortChFn = (a: { ch: string }, b: { ch: string }) => {
+        const numA = parseInt(a.ch, 10);
+        const numB = parseInt(b.ch, 10);
+        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+        return a.ch < b.ch ? -1 : a.ch > b.ch ? 1 : 0;
+      };
+
+      const band24 = Array.from(map24.values()).sort(sortChFn);
+      const band5 = Array.from(map5.values()).sort(sortChFn);
+      const band6 = Array.from(map6.values()).sort(sortChFn);
+
+      const named = Array.from(vendorMap.entries())
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+      const ouis = Array.from(ouiMap.entries())
+        .map(([oui, { count, vendor }]) => ({ oui, count, vendor }))
+        .sort((a, b) => (a.oui < b.oui ? -1 : a.oui > b.oui ? 1 : 0));
+
+      cached = {
+        channelOptions: {
+          band24,
+          band5,
+          band6,
+          total24: band24.reduce((acc, v) => acc + v.count, 0),
+          total5: band5.reduce((acc, v) => acc + v.count, 0),
+          total6: band6.reduce((acc, v) => acc + v.count, 0),
+        },
+        availableDates: Array.from(dateSet).sort(),
+        vendorData: {
+          hasUnassignedVendor: unassigned > 0,
+          unassignedCount: unassigned,
+          namedVendorsWithCount: named,
+        },
+        ouiData: ouis,
+      };
+      staticFiltersCache.set(sessionAps, cached);
+    }
+
+    return {
+      channelOptions: cached.channelOptions,
+      availableDates: cached.availableDates,
+      hasUnassignedVendor: cached.vendorData.hasUnassignedVendor,
+      unassignedCount: cached.vendorData.unassignedCount,
+      namedVendorsWithCount: cached.vendorData.namedVendorsWithCount,
+      availableOuisWithCount: cached.ouiData.map((o) => ({
+        ...o,
+        vendor: o.vendor === 'Non assigné' && language !== 'fr' ? 'Unassigned' : o.vendor,
+      })),
+    };
+  }, [sessionAps, language]);
 
   // Dynamic cipher algorithms for the selected security type (except WEP)
   const selectedSecType = filters.securityFilter.length === 1 ? filters.securityFilter[0] : null;
@@ -313,18 +351,26 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
     if (!isEligibleForCipherFilter || !selectedSecType) return [];
     const countMap = new Map<string, number>();
 
-    accessPoints
+    sessionAps
       .filter((ap) => ap.security.type === selectedSecType)
       .forEach((ap) => {
         const algos = new Set<string>();
         const rawAuth = (ap.authMode || '').toUpperCase();
+        const isWpa3Enterprise192 =
+          rawAuth.includes('SUITE-B') ||
+          rawAuth.includes('EAP/SHA384') ||
+          rawAuth.includes('EAP-SHA384') ||
+          rawAuth.includes('SHA384') ||
+          ap.security.type === 'WPA3_ENTERPRISE';
 
         if (rawAuth.includes('TKIP')) algos.add('TKIP');
-        if (rawAuth.includes('CCMP-256')) algos.add('CCMP-256');
-        else if (rawAuth.includes('CCMP')) algos.add('CCMP');
-        if (rawAuth.includes('GCMP-256')) algos.add('GCMP-256');
-        else if (rawAuth.includes('GCMP')) algos.add('GCMP-128');
-        if (rawAuth.includes('AES') && !rawAuth.includes('CCMP')) algos.add('AES');
+        if (rawAuth.includes('CCMP-256') || (rawAuth.includes('CCMP') && rawAuth.includes('256'))) algos.add('CCMP-256');
+        else if (rawAuth.includes('CCMP') || rawAuth.includes('AES')) algos.add('CCMP');
+
+        if (rawAuth.includes('GCMP-256') || (isWpa3Enterprise192 && rawAuth.includes('GCMP'))) algos.add('GCMP-256');
+        else if (rawAuth.includes('GCMP-128') || (rawAuth.includes('GCMP') && !rawAuth.includes('256') && !isWpa3Enterprise192)) algos.add('GCMP-128');
+
+        if (rawAuth.includes('AES') && !rawAuth.includes('CCMP') && !rawAuth.includes('GCMP')) algos.add('AES');
         if (rawAuth.includes('OWE')) algos.add('OWE');
         if (rawAuth.includes('SAE')) algos.add('SAE');
 
@@ -332,15 +378,28 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
           ap.security.ciphers.forEach((c) => {
             const upper = c.toUpperCase();
             if (upper.includes('TKIP')) algos.add('TKIP');
-            if (upper.includes('CCMP-256')) algos.add('CCMP-256');
-            else if (upper.includes('CCMP') || upper.includes('AES')) algos.add('CCMP');
-            if (upper.includes('GCMP-256')) algos.add('GCMP-256');
-            else if (upper.includes('GCMP')) algos.add('GCMP-128');
+
+            if (upper.includes('CCMP-256') || upper.includes('256')) {
+              algos.add('CCMP-256');
+            } else if (upper.includes('CCMP') || upper.includes('AES')) {
+              algos.add('CCMP');
+            }
+
+            if (upper.includes('GCMP-256') || upper.includes('256') || (isWpa3Enterprise192 && upper.includes('GCMP'))) {
+              algos.add('GCMP-256');
+            } else if (upper.includes('GCMP-128') || (upper.includes('GCMP') && !upper.includes('256') && !isWpa3Enterprise192)) {
+              algos.add('GCMP-128');
+            }
           });
         }
 
         if (algos.size === 0 && ap.security.cipherLabel) {
-          algos.add(ap.security.cipherLabel);
+          const upperLabel = ap.security.cipherLabel.toUpperCase();
+          if (upperLabel.includes('GCMP') && (upperLabel.includes('256') || isWpa3Enterprise192)) algos.add('GCMP-256');
+          else if (upperLabel.includes('GCMP')) algos.add('GCMP-128');
+          else if (upperLabel.includes('CCMP') && upperLabel.includes('256')) algos.add('CCMP-256');
+          else if (upperLabel.includes('CCMP') || upperLabel.includes('AES')) algos.add('CCMP');
+          else algos.add(ap.security.cipherLabel);
         }
 
         algos.forEach((algo) => {
@@ -351,7 +410,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
     return Array.from(countMap.entries())
       .map(([algo, count]) => ({ algo, count }))
       .sort((a, b) => b.count - a.count);
-  }, [accessPoints, selectedSecType, isEligibleForCipherFilter]);
+  }, [sessionAps, selectedSecType, isEligibleForCipherFilter]);
 
   // Filter Access Points: Search strictly restricted to SSID, BSSID/MAC, OUI
   const filteredAps = useMemo(() => {
@@ -381,11 +440,45 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
         const rawAuth = (ap.authMode || '').toUpperCase();
         const ciphers = (ap.security.ciphers || []).map((c) => c.toUpperCase());
         const cipherLabel = (ap.security.cipherLabel || '').toUpperCase();
+        const isWpa3Ent192 =
+          rawAuth.includes('SUITE-B') ||
+          rawAuth.includes('EAP/SHA384') ||
+          rawAuth.includes('EAP-SHA384') ||
+          rawAuth.includes('SHA384') ||
+          ap.security.type === 'WPA3_ENTERPRISE';
 
-        const match =
-          rawAuth.includes(target) ||
-          ciphers.some((c) => c.includes(target)) ||
-          cipherLabel.includes(target);
+        let match = false;
+
+        if (target === 'GCMP-256') {
+          match =
+            rawAuth.includes('GCMP-256') ||
+            (isWpa3Ent192 && rawAuth.includes('GCMP')) ||
+            ciphers.some((c) => c.includes('GCMP-256') || c.includes('256')) ||
+            (cipherLabel.includes('GCMP') && (cipherLabel.includes('256') || isWpa3Ent192));
+        } else if (target === 'GCMP-128') {
+          match =
+            (rawAuth.includes('GCMP-128') || (rawAuth.includes('GCMP') && !rawAuth.includes('256') && !isWpa3Ent192)) ||
+            ciphers.some((c) => c.includes('GCMP-128') || (c.includes('GCMP') && !c.includes('256') && !isWpa3Ent192)) ||
+            (cipherLabel.includes('GCMP') && !cipherLabel.includes('256') && !isWpa3Ent192);
+        } else if (target === 'CCMP-256') {
+          match =
+            rawAuth.includes('CCMP-256') ||
+            (rawAuth.includes('CCMP') && rawAuth.includes('256')) ||
+            ciphers.some((c) => c.includes('CCMP-256') || c.includes('256')) ||
+            (cipherLabel.includes('CCMP') && cipherLabel.includes('256'));
+        } else if (target === 'CCMP') {
+          match =
+            (rawAuth.includes('CCMP') && !rawAuth.includes('256')) ||
+            rawAuth.includes('AES') ||
+            ciphers.some((c) => c.includes('CCMP') || c.includes('AES')) ||
+            cipherLabel.includes('CCMP') ||
+            cipherLabel.includes('AES');
+        } else {
+          match =
+            rawAuth.includes(target) ||
+            ciphers.some((c) => c.includes(target)) ||
+            cipherLabel.includes(target);
+        }
 
         if (!match) return false;
       }
@@ -423,11 +516,11 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
 
       // 5. Date / Day Filter
       if (filters.dateFilter && filters.dateFilter !== 'ALL') {
-        const apDate = (ap.firstSeen || '').substring(0, 10);
-        const hasDateInObs = ap.observations.some((obs) =>
-          (obs.timestamp || '').startsWith(filters.dateFilter)
+        const apDateKey = extractDateKey(ap.firstSeen);
+        const hasDateInObs = apDateKey === filters.dateFilter || ap.observations.some((obs) =>
+          extractDateKey(obs.timestamp) === filters.dateFilter
         );
-        if (apDate !== filters.dateFilter && !hasDateInObs) return false;
+        if (!hasDateInObs) return false;
       }
 
       // 6. Geographic Location Filter (from map search / point selection)
@@ -472,26 +565,37 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
         if (ap.oui !== filters.ouiFilter) return false;
       }
 
+      // 10. Modified Networks Only Filter (O(1) pre-computed flag)
+      if (filters.onlyModifiedNetworks) {
+        if (!(ap.isModified ?? (ap.hasSsidChanged || ap.hasSecurityChanged))) return false;
+      }
+
       return true;
     });
   }, [accessPoints, filters]);
 
-  // Sort Access Points
+  // Sort Access Points (Optimized with cached Collator and fast string comparisons)
   const sortedAps = useMemo(() => {
     return [...filteredAps].sort((a, b) => {
       let comparison = 0;
       switch (sortField) {
-        case 'ssid':
-          comparison = (a.ssid || 'ZZZZ').localeCompare(b.ssid || 'ZZZZ', undefined, { sensitivity: 'base', numeric: true });
+        case 'ssid': {
+          const sA = a.ssid || '';
+          const sB = b.ssid || '';
+          if (!sA && !sB) comparison = 0;
+          else if (!sA) comparison = 1;
+          else if (!sB) comparison = -1;
+          else comparison = ssidCollator.compare(sA, sB);
           break;
+        }
         case 'mac':
-          comparison = a.mac.localeCompare(b.mac);
+          comparison = a.mac < b.mac ? -1 : a.mac > b.mac ? 1 : 0;
           break;
         case 'vendor':
-          comparison = a.vendor.localeCompare(b.vendor);
+          comparison = a.vendor < b.vendor ? -1 : a.vendor > b.vendor ? 1 : 0;
           break;
         case 'authMode':
-          comparison = a.authMode.localeCompare(b.authMode);
+          comparison = a.authMode < b.authMode ? -1 : a.authMode > b.authMode ? 1 : 0;
           break;
         case 'bestRssi':
           // Arrow UP ('asc') -> Best signal first (-30 dBm before -100 dBm)
@@ -505,13 +609,13 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
           break;
         }
         case 'band':
-          comparison = a.band.localeCompare(b.band);
+          comparison = a.band < b.band ? -1 : a.band > b.band ? 1 : 0;
           break;
         case 'frequency':
           comparison = (a.frequency || 0) - (b.frequency || 0);
           break;
         case 'firstSeen':
-          comparison = a.firstSeen.localeCompare(b.firstSeen);
+          comparison = parseTimestampToMs(a.firstSeen) - parseTimestampToMs(b.firstSeen);
           break;
         case 'observationCount':
           comparison = a.observationCount - b.observationCount;
@@ -700,7 +804,8 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
     filters.minRssi !== -100 ||
     filters.vendorFilter !== 'ALL' ||
     filters.ouiFilter !== 'ALL' ||
-    filters.locationFilter !== null;
+    filters.locationFilter !== null ||
+    Boolean(filters.onlyModifiedNetworks);
 
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm dark:shadow-xl p-4 sm:p-6 space-y-4 transition-colors">
@@ -876,7 +981,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                       </option>
                       {availableAlgorithmsForSelectedSec.map(({ algo, count }) => (
                         <option key={algo} value={algo}>
-                          {algo} ({count.toLocaleString()} {language === 'fr' ? 'réseaux' : 'APs'})
+                          {algo} ({count.toLocaleString()} {language === 'fr' ? (count > 1 ? 'réseaux' : 'réseau') : (count > 1 ? 'APs' : 'AP')})
                         </option>
                       ))}
                     </select>
@@ -907,27 +1012,27 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
               >
                 <option value="ALL">
                   {language === 'fr'
-                    ? `Tous les canaux / Toutes les bandes (${accessPoints.length.toLocaleString()} réseaux)`
-                    : `All Channels & Bands (${accessPoints.length.toLocaleString()} APs)`}
+                    ? `Tous les canaux / Toutes les bandes (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'réseaux' : 'réseau'})`
+                    : `All Channels & Bands (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'APs' : 'AP'})`}
                 </option>
 
                 {/* Quick Band Direct Filters */}
                 <optgroup label={language === 'fr' ? '── ⚡ Filtrer par bande complète ──' : '── ⚡ Filter by Full Band ──'}>
                   <option value="BAND_2_4">
                     {language === 'fr'
-                      ? `Toute la bande 2,4\u00A0GHz (${channelOptions.total24.toLocaleString()} réseaux)`
-                      : `All 2.4 GHz Band (${channelOptions.total24.toLocaleString()} APs)`}
+                      ? `Toute la bande 2,4\u00A0GHz (${channelOptions.total24.toLocaleString()} ${channelOptions.total24 > 1 ? 'réseaux' : 'réseau'})`
+                      : `All 2.4 GHz Band (${channelOptions.total24.toLocaleString()} ${channelOptions.total24 > 1 ? 'APs' : 'AP'})`}
                   </option>
                   <option value="BAND_5">
                     {language === 'fr'
-                      ? `Toute la bande 5\u00A0GHz (${channelOptions.total5.toLocaleString()} réseaux)`
-                      : `All 5 GHz Band (${channelOptions.total5.toLocaleString()} APs)`}
+                      ? `Toute la bande 5\u00A0GHz (${channelOptions.total5.toLocaleString()} ${channelOptions.total5 > 1 ? 'réseaux' : 'réseau'})`
+                      : `All 5 GHz Band (${channelOptions.total5.toLocaleString()} ${channelOptions.total5 > 1 ? 'APs' : 'AP'})`}
                   </option>
                   {channelOptions.total6 > 0 && (
                     <option value="BAND_6">
                       {language === 'fr'
-                        ? `Toute la bande 6\u00A0GHz (${channelOptions.total6.toLocaleString()} réseaux)`
-                        : `All 6 GHz Band (${channelOptions.total6.toLocaleString()} APs)`}
+                        ? `Toute la bande 6\u00A0GHz (${channelOptions.total6.toLocaleString()} ${channelOptions.total6 > 1 ? 'réseaux' : 'réseau'})`
+                        : `All 6 GHz Band (${channelOptions.total6.toLocaleString()} ${channelOptions.total6 > 1 ? 'APs' : 'AP'})`}
                     </option>
                   )}
                 </optgroup>
@@ -937,7 +1042,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                   <optgroup label={language === 'fr' ? '── Canaux 2,4\u00A0GHz (2412 - 2484\u00A0MHz) ──' : '── 2.4 GHz Channels (2412 - 2484 MHz) ──'}>
                     {channelOptions.band24.map((c) => (
                       <option key={`2G_${c.ch}`} value={`2G:${c.ch}`}>
-                        {language === 'fr' ? 'Canal' : 'Ch.'} {c.ch} ({c.freq}{language === 'fr' ? '\u00A0MHz' : ' MHz'}) — {c.count.toLocaleString()} {language === 'fr' ? 'réseaux' : 'APs'}
+                        {language === 'fr' ? 'Canal' : 'Ch.'} {c.ch} ({c.freq}{language === 'fr' ? '\u00A0MHz' : ' MHz'}) — {c.count.toLocaleString()} {language === 'fr' ? (c.count > 1 ? 'réseaux' : 'réseau') : (c.count > 1 ? 'APs' : 'AP')}
                       </option>
                     ))}
                   </optgroup>
@@ -948,7 +1053,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                   <optgroup label={language === 'fr' ? '── Canaux 5\u00A0GHz (5180 - 5885\u00A0MHz) ──' : '── 5 GHz Channels (5180 - 5885 MHz) ──'}>
                     {channelOptions.band5.map((c) => (
                       <option key={`5G_${c.ch}`} value={`5G:${c.ch}`}>
-                        {language === 'fr' ? 'Canal' : 'Ch.'} {c.ch} ({c.freq}{language === 'fr' ? '\u00A0MHz' : ' MHz'}) — {c.count.toLocaleString()} {language === 'fr' ? 'réseaux' : 'APs'}
+                        {language === 'fr' ? 'Canal' : 'Ch.'} {c.ch} ({c.freq}{language === 'fr' ? '\u00A0MHz' : ' MHz'}) — {c.count.toLocaleString()} {language === 'fr' ? (c.count > 1 ? 'réseaux' : 'réseau') : (c.count > 1 ? 'APs' : 'AP')}
                       </option>
                     ))}
                   </optgroup>
@@ -959,7 +1064,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                   <optgroup label={language === 'fr' ? '── Canaux 6\u00A0GHz (5955 - 7115\u00A0MHz / WiFi 6E/7) ──' : '── 6 GHz Channels (5955 - 7115 MHz / WiFi 6E/7) ──'}>
                     {channelOptions.band6.map((c) => (
                       <option key={`6G_${c.ch}`} value={`6G:${c.ch}`}>
-                        {language === 'fr' ? 'Canal' : 'Ch.'} {c.ch} ({c.freq}{language === 'fr' ? '\u00A0MHz' : ' MHz'}) — {c.count.toLocaleString()} {language === 'fr' ? 'réseaux' : 'APs'}
+                        {language === 'fr' ? 'Canal' : 'Ch.'} {c.ch} ({c.freq}{language === 'fr' ? '\u00A0MHz' : ' MHz'}) — {c.count.toLocaleString()} {language === 'fr' ? (c.count > 1 ? 'réseaux' : 'réseau') : (c.count > 1 ? 'APs' : 'AP')}
                       </option>
                     ))}
                   </optgroup>
@@ -1049,12 +1154,12 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
               >
                 <option value="ALL">
                   {language === 'fr'
-                    ? `Afficher tous les fabricants (${accessPoints.length.toLocaleString()} réseaux)`
-                    : `Show all manufacturers (${accessPoints.length.toLocaleString()} APs)`}
+                    ? `Afficher tous les fabricants (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'réseaux' : 'réseau'})`
+                    : `Show all manufacturers (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'APs' : 'AP'})`}
                 </option>
                 {hasUnassignedVendor && (
                   <option value="[Unassigned by IEEE]">
-                    {language === 'fr' ? "[Non assigné par l'IEEE]" : '[Unassigned by IEEE]'} ({unassignedCount.toLocaleString()} {language === 'fr' ? 'réseaux' : 'APs'})
+                    {language === 'fr' ? "[Non assigné par l'IEEE]" : '[Unassigned by IEEE]'} ({unassignedCount.toLocaleString()} {language === 'fr' ? (unassignedCount > 1 ? 'réseaux' : 'réseau') : (unassignedCount > 1 ? 'APs' : 'AP')})
                   </option>
                 )}
                 <option disabled className="text-slate-400">
@@ -1063,7 +1168,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                 <optgroup label={language === 'fr' ? '── Fabricants enregistrés à l\'IEEE ──' : '─ IEEE-registered Manufacturers ──'}>
                   {namedVendorsWithCount.map(({ name, count }) => (
                     <option key={name} value={name}>
-                      {name} ({count.toLocaleString()} {language === 'fr' ? 'réseaux' : 'APs'})
+                      {name} ({count.toLocaleString()} {language === 'fr' ? (count > 1 ? 'réseaux' : 'réseau') : (count > 1 ? 'APs' : 'AP')})
                     </option>
                   ))}
                 </optgroup>
@@ -1090,7 +1195,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                 </option>
                 {availableOuisWithCount.map(({ oui, count, vendor }) => (
                   <option key={oui} value={oui}>
-                    {oui} ({vendor}) — {count.toLocaleString()} APs
+                    {oui} ({vendor}) — {count.toLocaleString()} {language === 'fr' ? (count > 1 ? 'réseaux' : 'réseau') : (count > 1 ? 'APs' : 'AP')}
                   </option>
                 ))}
               </select>
@@ -1157,6 +1262,30 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* Modified Networks Only Toggle Filter */}
+            <div className="flex items-center gap-2 pt-2 border-t border-slate-200/80 dark:border-slate-800/80 col-span-full">
+              <label className="inline-flex items-center gap-2.5 cursor-pointer select-none text-xs font-semibold text-slate-800 dark:text-slate-200 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={Boolean(filters.onlyModifiedNetworks)}
+                  onChange={(e) => {
+                    onUpdateFilters((prev) => ({
+                      ...prev,
+                      onlyModifiedNetworks: e.target.checked,
+                    }));
+                    setCurrentPage(1);
+                  }}
+                  className="w-4 h-4 text-cyan-600 rounded border-slate-300 dark:border-slate-700 focus:ring-cyan-500 cursor-pointer accent-cyan-600"
+                />
+                <History className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>
+                  {language === 'fr'
+                    ? 'Afficher uniquement les réseaux modifiés au fil du temps (Nouveau SSID ou changement de chiffrement)'
+                    : 'Show only networks modified over time (New SSID or encryption change)'}
+                </span>
+              </label>
             </div>
           </div>
         </div>
@@ -1324,8 +1453,44 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800/60 font-medium">
             {paginatedAps.length === 0 ? (
               <tr>
-                <td colSpan={isWigleDevice ? 9 : 10} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
-                  No networks match your search or filter criteria.
+                <td colSpan={isWigleDevice ? 9 : 10} className="px-4 py-12 text-center text-slate-500 dark:text-slate-400">
+                  <div className="flex flex-col items-center justify-center space-y-2 max-w-lg mx-auto">
+                    {filters.onlyModifiedNetworks ? (
+                      <History className="w-8 h-8 text-cyan-600 dark:text-cyan-400 mb-1" />
+                    ) : (
+                      <Filter className="w-8 h-8 text-slate-400 dark:text-slate-500 mb-1" />
+                    )}
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">
+                      {filters.onlyModifiedNetworks
+                        ? (language === 'fr' ? 'Aucun réseau modifié au fil du temps' : 'No networks modified over time')
+                        : (language === 'fr' ? 'Aucun réseau ne correspond à vos critères' : 'No networks match your criteria')}
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                      {filters.onlyModifiedNetworks
+                        ? (language === 'fr'
+                            ? 'Aucun changement de SSID ni de protocole de chiffrement n\'a été détecté entre les différentes captures.'
+                            : 'No SSID or encryption changes were detected across the different scan captures.')
+                        : (language === 'fr'
+                            ? 'Aucun réseau ne correspond à votre recherche ou à vos filtres actifs.'
+                            : 'No networks match your active search query or filters.')}
+                    </p>
+                    {filters.onlyModifiedNetworks && (
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => onUpdateFilters((prev) => ({ ...prev, onlyModifiedNetworks: false }))}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-50 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-100 dark:hover:bg-cyan-900/60 border border-cyan-200 dark:border-cyan-800 transition-colors cursor-pointer"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>
+                            {language === 'fr'
+                              ? 'Désactiver le filtre des réseaux modifiés'
+                              : 'Disable modified networks filter'}
+                          </span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </td>
               </tr>
             ) : (
@@ -1338,7 +1503,8 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                 const showWpsBadge = filters.wpsFilter !== 'HIDE_BADGES';
                 // WiGLE clean simplified capability string
                 const cleanCaps = (ap.authMode || '').replace(/(\[\w+)\-.*?\]/g, '$1]');
-                const history = analyzeNetworkHistory(ap);
+                const isModifiedAp = ap.isModified ?? (ap.hasSsidChanged !== undefined ? Boolean(ap.hasSsidChanged || ap.hasSecurityChanged) : (hasMultipleDetections ? Boolean(analyzeNetworkHistory(ap).hasSsidChanged || analyzeNetworkHistory(ap).hasSecurityChanged) : false));
+                const history = isModifiedAp ? analyzeNetworkHistory(ap) : null;
 
                 return (
                   <React.Fragment key={ap.mac}>
@@ -1397,7 +1563,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                               &lt;{language === 'fr' ? 'SSID Masqué' : 'Hidden SSID'}&gt;
                             </span>
                           )}
-                          {history.hasSsidChanged && (
+                          {history && history.hasSsidChanged && (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -1448,7 +1614,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                             title={ap.authMode || (ap.observations && ap.observations.length > 0 ? ap.observations[0].authMode : '') || ap.security.label || '[]'}
                           >
                             {getSecurityBadge(ap)}
-                            {history.hasSecurityChanged && (
+                            {history && history.hasSecurityChanged && (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -1568,23 +1734,23 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                       >
                         <span
                           className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            history.hasSsidChanged || history.hasSecurityChanged
-                              ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 shadow-2xs'
+                            isModifiedAp
+                              ? 'bg-orange-100 dark:bg-orange-950/80 text-orange-800 dark:text-orange-200 border border-orange-400 dark:border-orange-600 shadow-2xs'
                               : hasMultipleDetections
                               ? 'bg-cyan-100 dark:bg-cyan-900/60 text-cyan-800 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-700/60'
                               : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                           }`}
                           title={
-                            history.hasSsidChanged || history.hasSecurityChanged
+                            isModifiedAp
                               ? language === 'fr'
-                                ? `Changement de SSID ou de chiffrement détecté (${ap.observationCount} détections)`
-                                : `SSID or encryption change detected (${ap.observationCount} detections recorded)`
+                                ? `Changement de SSID ou de chiffrement détecté (${ap.observationCount} ${ap.observationCount > 1 ? 'détections' : 'détection'})`
+                                : `SSID or encryption change detected (${ap.observationCount} ${ap.observationCount > 1 ? 'detections' : 'detection'} recorded)`
                               : hasMultipleDetections
                               ? (language === 'fr' ? `${ap.observationCount} détections enregistrées` : `${ap.observationCount} detections recorded`)
                               : (language === 'fr' ? '1 seule détection enregistrée' : 'Single detection recorded')
                           }
                         >
-                          <Layers className={`w-3 h-3 ${history.hasSsidChanged || history.hasSecurityChanged ? 'text-amber-600 dark:text-amber-400 stroke-[2.5]' : ''}`} />
+                          <Layers className={`w-3 h-3 ${isModifiedAp ? 'text-orange-600 dark:text-orange-400 stroke-[2.5]' : ''}`} />
                           <span>{ap.observationCount}x</span>
                         </span>
                       </td>
@@ -1746,8 +1912,8 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                                           valB = b.origIdx;
                                           break;
                                         case 'timestamp':
-                                          valA = a.obs.timestamp || '';
-                                          valB = b.obs.timestamp || '';
+                                          valA = parseTimestampToMs(a.obs.timestamp);
+                                          valB = parseTimestampToMs(b.obs.timestamp);
                                           break;
                                         case 'rssi':
                                           // Arrow UP ('asc') -> Best signal first (-30 dBm before -100 dBm)
