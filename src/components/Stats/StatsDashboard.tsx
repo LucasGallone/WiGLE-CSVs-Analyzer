@@ -195,7 +195,7 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3.5 rounded-2xl shadow-sm dark:shadow-lg">
             <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
               <span className="text-[11px] font-semibold uppercase tracking-wider">
-                {language === 'fr' ? 'FABRICANTS DÉTECTÉS' : 'DETECTED VENDORS'}
+                {language === 'fr' ? 'FABRICANTS DÉTECTÉS' : 'DETECTED MANUFACTURERS'}
               </span>
               <Cpu className="w-4 h-4 text-purple-600 dark:text-purple-400" />
             </div>
