@@ -1,11 +1,11 @@
 import React, { useState, useRef } from 'react';
-import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle2, Smartphone, HelpCircle, AlertCircle, X } from 'lucide-react';
-import { WigleHeaderInfo } from '../../types/wigle';
+import { UploadCloud, FileSpreadsheet, Trash2, CheckCircle2, Smartphone, HelpCircle, AlertCircle, X, Wifi, Bluetooth } from 'lucide-react';
+import { WigleHeaderInfo, AnalysisMode } from '../../types/wigle';
 import { useLanguage } from '../../context/LanguageContext';
 
 interface FileDropzoneProps {
-  onLoadFiles?: (files: File[]) => void;
-  onLoadCsv?: (csvContent: string, fileName: string, isAppend: boolean, totalFilesCount?: number) => void;
+  onLoadFiles?: (files: File[], mode?: AnalysisMode) => void;
+  onLoadCsv?: (csvContent: string, fileName: string, isAppend: boolean, totalFilesCount?: number, mode?: AnalysisMode) => void;
   onClearSession: () => void;
   loadedFiles: string[];
   totalAps: number;
@@ -14,6 +14,9 @@ interface FileDropzoneProps {
   isInitialModal?: boolean;
   isAddCsvModal?: boolean;
   onOpenInstructions?: () => void;
+  analysisMode?: AnalysisMode;
+  onChangeAnalysisMode?: (mode: AnalysisMode) => void;
+  isProcessing?: boolean;
 }
 
 export const FileDropzone: React.FC<FileDropzoneProps> = ({
@@ -27,6 +30,9 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
   isInitialModal = false,
   isAddCsvModal = false,
   onOpenInstructions,
+  analysisMode = 'WIFI',
+  onChangeAnalysisMode,
+  isProcessing = false,
 }) => {
   const { language } = useLanguage();
   const [isDragging, setIsDragging] = useState(false);
@@ -35,13 +41,16 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
     names: string[];
   } | null>(null);
   const [pendingValidFiles, setPendingValidFiles] = useState<File[] | null>(null);
+  const [filesAwaitingMode, setFilesAwaitingMode] = useState<File[] | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const executeImport = (fileArray: File[]) => {
+  const executeImport = (fileArray: File[], mode?: AnalysisMode) => {
     if (!fileArray || fileArray.length === 0) return;
 
+    const chosenMode = mode || analysisMode;
+
     if (onLoadFiles) {
-      onLoadFiles(fileArray);
+      onLoadFiles(fileArray, chosenMode);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -56,7 +65,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
           const text = e.target?.result as string;
           if (text) {
             const append = isAddCsvModal || loadedFiles.length > 0 || index > 0;
-            onLoadCsv(text, file.name, append, count);
+            onLoadCsv(text, file.name, append, count, chosenMode);
           }
         };
         reader.readAsText(file);
@@ -107,7 +116,8 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
       setPendingValidFiles(null);
     }
 
-    executeImport(validCsvFiles);
+    // Prompt user before starting import whether to analyze WiFi or Bluetooth
+    setFilesAwaitingMode(validCsvFiles);
   };
 
   const handleConfirmPendingImport = () => {
@@ -115,7 +125,22 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
       const filesToLoad = pendingValidFiles;
       setPendingValidFiles(null);
       setRejectedState(null);
-      executeImport(filesToLoad);
+      setFilesAwaitingMode(filesToLoad);
+    }
+  };
+
+  const handleSelectModeAndImport = (mode: AnalysisMode) => {
+    const filesToLoad = filesAwaitingMode;
+    setFilesAwaitingMode(null);
+    if (filesToLoad && filesToLoad.length > 0) {
+      executeImport(filesToLoad, mode);
+    }
+  };
+
+  const handleCancelModeSelection = () => {
+    setFilesAwaitingMode(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -365,7 +390,7 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
 
         <div className="flex flex-col items-center justify-center space-y-2.5">
           {/* Static icon without bounce */}
-          <div className="p-3.5 rounded-2xl bg-cyan-100 dark:bg-cyan-950/60 border border-cyan-300 dark:border-cyan-700/50 text-cyan-600 dark:text-cyan-400 shadow-sm">
+          <div className="p-3.5 rounded-2xl border shadow-sm transition-colors bg-cyan-100 dark:bg-cyan-950/60 border-cyan-300 dark:border-cyan-700/50 text-cyan-600 dark:text-cyan-400">
             <UploadCloud className="w-7 h-7" />
           </div>
 
@@ -373,20 +398,20 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
             <p className="text-sm font-bold text-slate-900 dark:text-white">
               {language === 'fr' ? (
                 <>
-                  Glissez-déposez vos fichiers <span className="text-cyan-600 dark:text-cyan-400 font-sans font-bold">WiGLE</span> ici, ou{' '}
-                  <span className="text-cyan-600 dark:text-cyan-400 underline font-semibold">parcourez vos fichiers</span>
+                  Glissez-déposez vos fichiers <span className="font-sans font-bold text-cyan-600 dark:text-cyan-400">WiGLE</span> ici, ou{' '}
+                  <span className="underline font-semibold text-cyan-600 dark:text-cyan-400">parcourez vos fichiers</span>
                 </>
               ) : (
                 <>
-                  Drag & drop your <span className="text-cyan-600 dark:text-cyan-400 font-sans font-bold">WiGLE</span> files here, or{' '}
-                  <span className="text-cyan-600 dark:text-cyan-400 underline font-semibold">browse your files</span>
+                  Drag & drop your <span className="font-sans font-bold text-cyan-600 dark:text-cyan-400">WiGLE</span> files here, or{' '}
+                  <span className="underline font-semibold text-cyan-600 dark:text-cyan-400">browse your files</span>
                 </>
               )}
             </p>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               {language === 'fr'
-                ? 'Format attendu\u00A0: CSV'
-                : 'Expected format: CSV'}
+                ? 'Format attendu\u00A0: CSV (WiFi ou Bluetooth)'
+                : 'Expected format: CSV (WiFi or Bluetooth)'}
             </p>
           </div>
 
@@ -442,12 +467,117 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
                 </span>
               ))}
               <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                ({totalAps.toLocaleString()} {language === 'fr' ? (totalAps > 1 ? 'réseaux uniques' : 'réseau unique') : (totalAps > 1 ? 'unique APs' : 'unique AP')} / {totalRecords.toLocaleString()} {language === 'fr' ? 'scans' : 'scans'})
+                ({totalAps.toLocaleString()}{' '}
+                {analysisMode === 'BT'
+                  ? language === 'fr'
+                    ? totalAps > 1
+                      ? 'périphériques Bluetooth'
+                      : 'périphérique Bluetooth'
+                    : totalAps > 1
+                    ? 'Bluetooth devices'
+                    : 'Bluetooth device'
+                  : language === 'fr'
+                  ? totalAps > 1
+                    ? 'réseaux uniques'
+                    : 'réseau unique'
+                  : totalAps > 1
+                  ? 'unique APs'
+                  : 'unique AP'}{' '}
+                / {totalRecords.toLocaleString()} {language === 'fr' ? 'scans' : 'scans'})
               </span>
             </div>
           )}
         </div>
       </div>
+
+      {/* Modal de sélection WiFi / Bluetooth */}
+      {filesAwaitingMode && filesAwaitingMode.length > 0 && !isProcessing && (
+        <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-2xl shadow-2xl p-6 sm:p-7 space-y-5"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-cyan-100 dark:bg-cyan-950 text-cyan-600 dark:text-cyan-400">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    {language === 'fr' ? "Que souhaitez-vous analyser ?" : 'What would you like to analyze?'}
+                  </h3>
+                  {filesAwaitingMode.length > 1 && (
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">
+                      {language === 'fr'
+                        ? `${filesAwaitingMode.length} fichiers sélectionnés`
+                        : `${filesAwaitingMode.length} selected files`}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCancelModeSelection}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 text-center">
+                {language === 'fr'
+                  ? 'Veuillez choisir le type de données que vous souhaitez analyser :'
+                  : 'Please choose which data type you would like to analyze:'}
+              </p>
+
+              <div className="grid grid-cols-2 gap-4 pt-1">
+                {/* Carré 1: Analyse WiFi */}
+                <button
+                  type="button"
+                  onClick={() => handleSelectModeAndImport('WIFI')}
+                  className="flex flex-col items-center justify-center p-6 rounded-2xl border-2 border-slate-200 dark:border-slate-700/80 hover:border-cyan-500 dark:hover:border-cyan-400 bg-slate-50 hover:bg-cyan-50/60 dark:bg-slate-800/40 dark:hover:bg-cyan-950/40 text-center transition-all cursor-pointer group shadow-sm hover:shadow-md gap-3 min-h-[170px]"
+                >
+                  <div className="p-3.5 rounded-2xl bg-cyan-600 text-white shadow-sm group-hover:scale-110 transition-transform">
+                    <Wifi className="w-8 h-8" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+                      {language === 'fr' ? 'WiFi' : 'WiFi'}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                      {language === 'fr'
+                        ? 'Points d\'accès, sécurité, canaux, bandes...'
+                        : 'Access points, security, channels, bands...'}
+                    </p>
+                  </div>
+                </button>
+
+                {/* Carré 2: Analyse Bluetooth */}
+                <button
+                  type="button"
+                  onClick={() => handleSelectModeAndImport('BT')}
+                  className="flex flex-col items-center justify-center p-6 rounded-2xl border-2 border-slate-200 dark:border-slate-700/80 hover:border-indigo-500 dark:hover:border-indigo-400 bg-slate-50 hover:bg-indigo-50/60 dark:bg-slate-800/40 dark:hover:bg-indigo-950/40 text-center transition-all cursor-pointer group shadow-sm hover:shadow-md gap-3 min-h-[170px]"
+                >
+                  <div className="p-3.5 rounded-2xl bg-indigo-600 text-white shadow-sm group-hover:scale-110 transition-transform">
+                    <Bluetooth className="w-8 h-8" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                      {language === 'fr' ? 'Bluetooth' : 'Bluetooth'}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                      {language === 'fr'
+                        ? 'Périphériques, catégories, fabricants...'
+                        : 'Devices, categories, manufacturers...'}
+                    </p>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

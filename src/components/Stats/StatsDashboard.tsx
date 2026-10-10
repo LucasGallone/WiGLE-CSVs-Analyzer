@@ -1,10 +1,11 @@
 import React, { useState, useMemo } from 'react';
-import { ScanSessionData, ProcessedAccessPoint } from '../../types/wigle';
-import { calculateStats, formatPercentage, calculatePercentagesWithExactSum } from '../../utils/statsUtils';
+import { ScanSessionData, ProcessedAccessPoint, AnalysisMode } from '../../types/wigle';
+import { calculateStats, calculateBtStats, formatPercentage, calculatePercentagesWithExactSum } from '../../utils/statsUtils';
 import { useLanguage } from '../../context/LanguageContext';
 import { VendorRankingModal } from './VendorRankingModal';
 import {
   Wifi,
+  Bluetooth,
   Radio,
   Lock,
   Unlock,
@@ -14,6 +15,16 @@ import {
   Signal,
   ExternalLink,
   RotateCcw,
+  Headphones,
+  Smartphone,
+  Watch,
+  Keyboard,
+  Car,
+  Heart,
+  Bot,
+  Tv,
+  HelpCircle,
+  Tag,
 } from 'lucide-react';
 
 interface StatsDashboardProps {
@@ -22,11 +33,15 @@ interface StatsDashboardProps {
   isFilterActive?: boolean;
   isSecurityFiltered?: boolean;
   isVendorFiltered?: boolean;
+  isCategoryFiltered?: boolean;
   isWigleDevice?: boolean;
+  analysisMode?: AnalysisMode;
   onFilterBySecurity?: (type: string) => void;
   onFilterByVendor?: (vendor: string) => void;
+  onFilterByCategory?: (category: string) => void;
   onResetSecurityFilter?: () => void;
   onResetVendorFilter?: () => void;
+  onResetCategoryFilter?: () => void;
 }
 
 export const StatsDashboard: React.FC<StatsDashboardProps> = ({
@@ -35,20 +50,37 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
   isFilterActive = false,
   isSecurityFiltered = false,
   isVendorFiltered = false,
+  isCategoryFiltered = false,
   isWigleDevice = false,
+  analysisMode = 'WIFI',
   onFilterBySecurity,
   onFilterByVendor,
+  onFilterByCategory,
   onResetSecurityFilter,
   onResetVendorFilter,
+  onResetCategoryFilter,
 }) => {
   const { t, language } = useLanguage();
   const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
-  const stats = useMemo(() => calculateStats(session, filteredAps), [session, filteredAps]);
+  
+  const stats = useMemo(() => {
+    if (analysisMode === 'BT') return null;
+    return calculateStats(session, filteredAps);
+  }, [session, filteredAps, analysisMode]);
+
+  const btStats = useMemo(() => {
+    if (analysisMode !== 'BT') return null;
+    return calculateBtStats(session, filteredAps);
+  }, [session, filteredAps, analysisMode]);
 
   if (!session) {
     return (
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center text-slate-500 dark:text-slate-400 shadow-sm transition-colors">
-        <Wifi className="w-12 h-12 text-slate-400 dark:text-slate-600 mx-auto mb-3" />
+        {analysisMode === 'BT' ? (
+          <Bluetooth className="w-12 h-12 text-slate-400 dark:text-slate-600 mx-auto mb-3" />
+        ) : (
+          <Wifi className="w-12 h-12 text-slate-400 dark:text-slate-600 mx-auto mb-3" />
+        )}
         <p className="font-semibold text-slate-700 dark:text-slate-300">
           {language === 'fr' ? 'Aucune donnée de session disponible.' : 'No session data available.'}
         </p>
@@ -64,7 +96,7 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center text-slate-500 dark:text-slate-400 shadow-sm transition-colors flex flex-col items-center justify-center">
         <BarChart3 className="w-12 h-12 text-amber-500 mx-auto mb-3" />
         <p className="font-bold text-slate-800 dark:text-slate-200 text-sm">
-          {language === 'fr' ? 'Aucun réseau ne correspond à vos filtres actifs.' : 'No networks match your active filters.'}
+          {language === 'fr' ? (analysisMode === 'BT' ? 'Aucun périphérique Bluetooth ne correspond à vos filtres actifs.' : 'Aucun réseau ne correspond à vos filtres actifs.') : (analysisMode === 'BT' ? 'No Bluetooth devices match your active filters.' : 'No networks match your active filters.')}
         </p>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md">
           {language === 'fr'
@@ -75,18 +107,326 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
     );
   }
 
-  if (!stats) {
+  // Bluetooth Mode Dashboard View
+  if (analysisMode === 'BT' && btStats) {
+    const getCategoryIcon = (iconName: string) => {
+      switch (iconName) {
+        case 'Headphones': return <Headphones className="w-4 h-4" />;
+        case 'Smartphone': return <Smartphone className="w-4 h-4" />;
+        case 'Watch': return <Watch className="w-4 h-4" />;
+        case 'Keyboard': return <Keyboard className="w-4 h-4" />;
+        case 'Car': return <Car className="w-4 h-4" />;
+        case 'Heart': case 'Activity': case 'Thermometer': case 'Scale': return <Heart className="w-4 h-4" />;
+        case 'Gamepad2': case 'Toy': case 'Bot': return <Bot className="w-4 h-4" />;
+        case 'Tv': case 'Video': case 'Camera': return <Tv className="w-4 h-4" />;
+        default: return <Bluetooth className="w-4 h-4" />;
+      }
+    };
+
     return (
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center text-slate-500 dark:text-slate-400 shadow-sm transition-colors">
-        <Wifi className="w-12 h-12 text-slate-400 dark:text-slate-600 mx-auto mb-3" />
-        <p className="font-semibold text-slate-700 dark:text-slate-300">
-          {language === 'fr' ? 'Aucune donnée de session disponible.' : 'No session data available.'}
-        </p>
-        <p className="text-xs mt-1">
-          {language === 'fr' ? 'Importez un fichier CSV complet pour générer les analyses.' : 'Import a complete CSV file to generate comprehensive analytics.'}
-        </p>
+      <div className="space-y-5">
+        {/* Main Bluetooth KPI Row */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* 1. Total Unique Bluetooth Devices */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3.5 rounded-2xl shadow-sm dark:shadow-lg">
+            <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">
+                {language === 'fr' ? 'PÉRIPHÉRIQUES BLUETOOTH' : 'BLUETOOTH DEVICES'}
+              </span>
+              <Bluetooth className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            </div>
+            <div className="text-2xl font-black text-slate-900 dark:text-white font-sans tracking-tight">
+              {btStats.totalUniqueDevices.toLocaleString()}
+            </div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+              {btStats.totalObservations.toLocaleString()} {language === 'fr' ? 'captures au total' : 'captures in total'}
+            </div>
+          </div>
+
+          {/* 2. Named Devices (with Broadcast Name) */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3.5 rounded-2xl shadow-sm dark:shadow-lg">
+            <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">
+                {language === 'fr' ? 'PÉRIPHÉRIQUES NOMMÉS' : 'NAMED DEVICES'}
+              </span>
+              <Tag className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+            </div>
+            <div className="text-2xl font-black text-slate-900 dark:text-white font-sans tracking-tight">
+              {btStats.totalNamedDevices.toLocaleString()}
+            </div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+              {formatPercentage(btStats.totalNamedDevices, btStats.totalUniqueDevices)} {language === 'fr' ? 'de périphériques avec un nom affiché' : 'of devices with a displayed name'}
+            </div>
+          </div>
+
+          {/* 3. Unnamed / Anonymous Devices */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3.5 rounded-2xl shadow-sm dark:shadow-lg">
+            <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">
+                {language === 'fr' ? 'PÉRIPHÉRIQUES SANS NOM' : 'UNNAMED DEVICES'}
+              </span>
+              <HelpCircle className="w-4 h-4 text-slate-400" />
+            </div>
+            <div className="text-2xl font-black text-slate-700 dark:text-slate-300 font-sans tracking-tight">
+              {btStats.totalUnnamedDevices.toLocaleString()}
+            </div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+              {formatPercentage(btStats.totalUnnamedDevices, btStats.totalUniqueDevices)} {language === 'fr' ? 'avec un nom masqué' : 'with hidden name'}
+            </div>
+          </div>
+
+          {/* 4. Average Signal RSSI */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3.5 rounded-2xl shadow-sm dark:shadow-lg">
+            <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">
+                {language === 'fr' ? 'SIGNAL MOYEN (RSSI)' : 'AVERAGE SIGNAL'}
+              </span>
+              <Signal className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 font-sans tracking-tight">
+              {btStats.averageRssi} dBm
+            </div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+              {language === 'fr' ? `Niveau maximal : ${btStats.bestRssi} dBm` : `Max Level: ${btStats.bestRssi} dBm`}
+            </div>
+          </div>
+
+          {/* 5. Identified Manufacturers */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3.5 rounded-2xl shadow-sm dark:shadow-lg">
+            <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">
+                {language === 'fr' ? 'FABRICANTS DÉTECTÉS' : 'DETECTED VENDORS'}
+              </span>
+              <Cpu className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+            </div>
+            <div className="text-2xl font-black text-purple-600 dark:text-purple-400 font-sans tracking-tight">
+              {btStats.totalUniqueVendors.toLocaleString()}
+            </div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+              {language === 'fr' ? 'Fabricants identifiés' : 'Identified manufacturers'}
+            </div>
+          </div>
+
+          {/* 6. Device Categories */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3.5 rounded-2xl shadow-sm dark:shadow-lg">
+            <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider">
+                {language === 'fr' ? 'CATÉGORIES DE PÉRIPHÉRIQUES' : 'DEVICE CATEGORIES'}
+              </span>
+              <HelpCircle className="w-4 h-4 text-amber-500 dark:text-amber-400" />
+            </div>
+            <div className="text-2xl font-black text-amber-600 dark:text-amber-400 font-sans tracking-tight">
+              {btStats.categoryBreakdown.length}
+            </div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+              {language === 'fr' ? 'catégories différentes identifiées par WiGLE' : 'different categories identified by WiGLE'}
+            </div>
+          </div>
+        </div>
+
+        {/* Main Analysis Panels: Categories & Manufacturers */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* Categories Breakdown */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm dark:shadow-xl space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800 gap-2 flex-wrap">
+              <div className="flex items-center gap-2 font-bold text-sm text-slate-900 dark:text-white">
+                <Bluetooth className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                <span>{language === 'fr' ? 'Catégories de périphériques Bluetooth' : 'Bluetooth Device Categories'}</span>
+                {(isCategoryFiltered || isFilterActive) && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-slate-950 uppercase tracking-wide">
+                    {language === 'fr' ? 'FILTRAGE ACTIF' : 'FILTERED'}
+                  </span>
+                )}
+              </div>
+
+              {isCategoryFiltered && onResetCategoryFilter && (
+                <button
+                  type="button"
+                  onClick={onResetCategoryFilter}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800 transition-colors shadow-xs cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>{language === 'fr' ? 'Réinitialiser' : 'Reset'}</span>
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1 custom-scrollbar">
+              {btStats.categoryBreakdown.map((cat) => {
+                const label = language === 'fr' ? cat.labelFr : cat.labelEn;
+                return (
+                  <div
+                    key={cat.id}
+                    onClick={() => onFilterByCategory && onFilterByCategory(cat.labelEn)}
+                    className="group cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 p-2 rounded-xl transition-all"
+                  >
+                    <div className="flex items-center justify-between text-xs mb-1.5 font-medium">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="p-1 rounded-lg text-white"
+                          style={{ backgroundColor: cat.color }}
+                        >
+                          {getCategoryIcon(cat.iconName)}
+                        </span>
+                        <span className="text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-300 transition-colors font-semibold">
+                          {label}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 font-sans">
+                        <span className="text-slate-500 dark:text-slate-400 font-medium">{cat.count.toLocaleString()}</span>
+                        <span className="font-bold text-slate-900 dark:text-white min-w-[36px] text-right">{cat.percentageFormatted}</span>
+                      </div>
+                    </div>
+
+                    <div className="w-full bg-slate-100 dark:bg-slate-950 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: cat.percentage > 0 ? `${cat.percentage}%` : '0%',
+                          backgroundColor: cat.color,
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Top Bluetooth Manufacturers */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm dark:shadow-xl space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800 gap-2 flex-wrap">
+              <div className="flex items-center gap-2 font-bold text-sm text-slate-900 dark:text-white">
+                <Cpu className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                <span>{language === 'fr' ? 'Principaux fabricants détectés' : 'Top Detected Manufacturers'}</span>
+                {(isVendorFiltered || isFilterActive) && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-slate-950 uppercase tracking-wide">
+                    {language === 'fr' ? 'FILTRAGE ACTIF' : 'FILTERED'}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {isVendorFiltered && onResetVendorFilter && (
+                  <button
+                    type="button"
+                    onClick={onResetVendorFilter}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800 transition-colors shadow-xs cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>{language === 'fr' ? 'Réinitialiser' : 'Reset'}</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setIsVendorModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-800 transition-colors shadow-xs cursor-pointer"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>{language === 'fr' ? 'Voir la liste complète' : 'View full list'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1 custom-scrollbar">
+              {btStats.vendorBreakdown.map((v) => {
+                const isOther = v.vendor.toLowerCase().includes('other') || v.vendor.toLowerCase().includes('autre');
+                return (
+                  <div
+                    key={v.vendor}
+                    onClick={() => {
+                      if (isOther) return;
+                      if (onFilterByVendor) onFilterByVendor(v.vendor);
+                    }}
+                    className={`group p-1.5 rounded-xl transition-all ${
+                      isOther
+                        ? 'cursor-default opacity-80 select-none'
+                        : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs mb-1 font-medium gap-2">
+                      <span
+                        title={isOther ? '' : v.vendor}
+                        className={`truncate flex-1 min-w-0 pr-1 ${
+                          isOther
+                            ? 'text-slate-500 dark:text-slate-400 italic'
+                            : 'text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-300 transition-colors font-semibold'
+                        }`}
+                      >
+                        {language === 'fr' && isOther ? 'Autres fabricants' : v.vendor}
+                      </span>
+                      <div className="flex items-center gap-2 font-sans shrink-0">
+                        <span className="text-slate-500 dark:text-slate-400 font-medium">{v.count.toLocaleString()}</span>
+                        <span className="font-bold text-slate-900 dark:text-white min-w-[32px] text-right">{v.percentageFormatted}</span>
+                      </div>
+                    </div>
+
+                    <div className="w-full bg-slate-100 dark:bg-slate-950 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-blue-500 transition-all duration-500"
+                        style={{ width: v.percentage > 0 ? `${v.percentage}%` : '0%' }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Secondary Analysis Row: Signal RSSI */}
+        <div className="grid grid-cols-1 gap-5">
+          {/* Signal RSSI Distribution */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm dark:shadow-xl space-y-3">
+            <div className="flex items-center gap-2 font-bold text-sm text-slate-900 dark:text-white pb-2 border-b border-slate-200 dark:border-slate-800">
+              <Signal className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span>{language === 'fr' ? 'Répartition des niveaux de signal (RSSI)' : 'Signal Strength Ranking (RSSI)'}</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-1">
+              {btStats.rssiBreakdown.map((rb) => (
+                <div key={rb.range} className="space-y-1.5 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-800">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-700 dark:text-slate-300 font-semibold">
+                      {rb.range}
+                    </span>
+                    <span className="font-sans font-bold text-slate-900 dark:text-white">
+                      {rb.count} ({rb.percentageFormatted})
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                    {rb.label}
+                  </div>
+                  <div className="w-full bg-slate-200 dark:bg-slate-950 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: rb.percentage > 0 ? `${rb.percentage}%` : '0%',
+                        backgroundColor: rb.color,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Full Vendor Ranking Modal */}
+        <VendorRankingModal
+          isOpen={isVendorModalOpen}
+          onClose={() => setIsVendorModalOpen(false)}
+          allVendors={btStats.allVendorsBreakdown}
+          totalUniqueAPs={btStats.totalUniqueDevices}
+          onFilterByVendor={onFilterByVendor}
+        />
       </div>
     );
+  }
+
+  if (!stats) {
+    return null;
   }
 
   const [withEncStat, withoutEncStat] = calculatePercentagesWithExactSum(

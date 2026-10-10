@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { ProcessedAccessPoint, FilterState, SecurityCategory } from '../../types/wigle';
+import { ProcessedAccessPoint, FilterState, SecurityCategory, AnalysisMode } from '../../types/wigle';
 import {
   Search,
   SlidersHorizontal,
@@ -25,6 +25,18 @@ import {
   RotateCcw,
   History,
   Loader2,
+  Bluetooth,
+  Smartphone,
+  Headphones,
+  Watch,
+  Laptop,
+  Car,
+  Heart,
+  Keyboard,
+  Tv,
+  Activity,
+  Tag,
+  Cpu,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 import { analyzeNetworkHistory, parseTimestampToMs } from '../../utils/historyUtils';
@@ -32,6 +44,7 @@ import { classifySecurity } from '../../utils/csvParser';
 import { NetworkHistoryModal } from './NetworkHistoryModal';
 import { getWigleSignalTier } from '../../utils/wigleSignalColors';
 import { formatToEuropeanDate } from '../../utils/statsUtils';
+import { BT_CATEGORY_MAP, resolveBtCategory, resolveBtCompany, getBtAddressType } from '../../utils/bluetoothUtils';
 
 function extractDateKey(timestamp?: string | null): string {
   if (!timestamp) return '';
@@ -100,6 +113,7 @@ interface NetworkTableProps {
   onUpdateFilters: (updater: (prev: FilterState) => FilterState) => void;
   onResetFilters: () => void;
   isWigleDevice?: boolean;
+  analysisMode?: AnalysisMode;
 }
 
 type SortField =
@@ -112,7 +126,11 @@ type SortField =
   | 'band'
   | 'frequency'
   | 'firstSeen'
-  | 'observationCount';
+  | 'observationCount'
+  | 'btCategory'
+  | 'btProtocol'
+  | 'btCompany'
+  | 'btAddressType';
 type SortOrder = 'asc' | 'desc';
 
 export type SubTableSortField =
@@ -136,6 +154,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
   onUpdateFilters,
   onResetFilters,
   isWigleDevice = false,
+  analysisMode = 'WIFI',
 }) => {
   const { t, language } = useLanguage();
   const sessionAps = allAccessPoints || accessPoints;
@@ -412,108 +431,162 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
       .sort((a, b) => b.count - a.count);
   }, [sessionAps, selectedSecType, isEligibleForCipherFilter]);
 
-  // Filter Access Points: Search strictly restricted to SSID, BSSID/MAC, OUI
+  // Filter Access Points / Bluetooth Devices
   const filteredAps = useMemo(() => {
     return accessPoints.filter((ap) => {
-      // 1. Search Query (STRICTLY by SSID, BSSID/MAC, or OUI prefix)
-      if (filters.searchQuery) {
-        const q = filters.searchQuery.toLowerCase().trim();
-        const matchSsid = ap.ssid.toLowerCase().includes(q);
-        const matchMac = ap.mac.toLowerCase().includes(q);
-        const matchOui = ap.oui.toLowerCase().includes(q);
-        if (!matchSsid && !matchMac && !matchOui) return false;
-      }
-
-      // 2. Direct Encryption / Security Filter
-      if (filters.securityFilter.length > 0 && !filters.securityFilter.includes('ALL')) {
-        if (!filters.securityFilter.includes(ap.security.type)) return false;
-      }
-
-      // 2b. Dynamic Cipher Algorithm Filter (when active security filter is not WEP and cipher filter toggle is enabled)
-      if (
-        filters.isCipherFilterActive &&
-        filters.cipherAlgorithmFilter &&
-        filters.cipherAlgorithmFilter !== 'ALL' &&
-        isEligibleForCipherFilter
-      ) {
-        const target = filters.cipherAlgorithmFilter.toUpperCase();
-        const rawAuth = (ap.authMode || '').toUpperCase();
-        const ciphers = (ap.security.ciphers || []).map((c) => c.toUpperCase());
-        const cipherLabel = (ap.security.cipherLabel || '').toUpperCase();
-        const isWpa3Ent192 =
-          rawAuth.includes('SUITE-B') ||
-          rawAuth.includes('EAP/SHA384') ||
-          rawAuth.includes('EAP-SHA384') ||
-          rawAuth.includes('SHA384') ||
-          ap.security.type === 'WPA3_ENTERPRISE';
-
-        let match = false;
-
-        if (target === 'GCMP-256') {
-          match =
-            rawAuth.includes('GCMP-256') ||
-            (isWpa3Ent192 && rawAuth.includes('GCMP')) ||
-            ciphers.some((c) => c.includes('GCMP-256') || c.includes('256')) ||
-            (cipherLabel.includes('GCMP') && (cipherLabel.includes('256') || isWpa3Ent192));
-        } else if (target === 'GCMP-128') {
-          match =
-            (rawAuth.includes('GCMP-128') || (rawAuth.includes('GCMP') && !rawAuth.includes('256') && !isWpa3Ent192)) ||
-            ciphers.some((c) => c.includes('GCMP-128') || (c.includes('GCMP') && !c.includes('256') && !isWpa3Ent192)) ||
-            (cipherLabel.includes('GCMP') && !cipherLabel.includes('256') && !isWpa3Ent192);
-        } else if (target === 'CCMP-256') {
-          match =
-            rawAuth.includes('CCMP-256') ||
-            (rawAuth.includes('CCMP') && rawAuth.includes('256')) ||
-            ciphers.some((c) => c.includes('CCMP-256') || c.includes('256')) ||
-            (cipherLabel.includes('CCMP') && cipherLabel.includes('256'));
-        } else if (target === 'CCMP') {
-          match =
-            (rawAuth.includes('CCMP') && !rawAuth.includes('256')) ||
-            rawAuth.includes('AES') ||
-            ciphers.some((c) => c.includes('CCMP') || c.includes('AES')) ||
-            cipherLabel.includes('CCMP') ||
-            cipherLabel.includes('AES');
-        } else {
-          match =
-            rawAuth.includes(target) ||
-            ciphers.some((c) => c.includes(target)) ||
-            cipherLabel.includes(target);
+      if (analysisMode === 'BT') {
+        // 1. Bluetooth Search Query (by Device Name / SSID, MAC, OUI, Vendor, Company, Category)
+        if (filters.searchQuery) {
+          const q = filters.searchQuery.toLowerCase().trim();
+          const matchSsid = (ap.ssid || '').toLowerCase().includes(q);
+          const matchMac = (ap.mac || '').toLowerCase().includes(q);
+          const matchOui = (ap.oui || '').toLowerCase().includes(q);
+          const matchVendor = (ap.vendor || '').toLowerCase().includes(q);
+          const matchCompany = (ap.btCompany || '').toLowerCase().includes(q);
+          const matchCatFr = (ap.btCategoryFr || '').toLowerCase().includes(q);
+          const matchCatEn = (ap.btCategoryEn || '').toLowerCase().includes(q);
+          if (!matchSsid && !matchMac && !matchOui && !matchVendor && !matchCompany && !matchCatFr && !matchCatEn) {
+            return false;
+          }
         }
 
-        if (!match) return false;
-      }
+        // 2. Bluetooth Category Filter
+        if (filters.btCategoryFilter && filters.btCategoryFilter !== 'ALL') {
+          const target = filters.btCategoryFilter;
+          const matchCat =
+            ap.btCategory === target ||
+            ap.btCategoryEn === target ||
+            ap.btCategoryFr === target ||
+            ap.btCategoryGroup === target ||
+            (target.toLowerCase().includes('uncategorized') &&
+              (!ap.btCategory ||
+                ap.btCategory.toLowerCase().includes('uncategorized') ||
+                (ap.btCategoryEn && ap.btCategoryEn.toLowerCase().includes('uncategorized')) ||
+                (ap.btCategoryFr && ap.btCategoryFr.toLowerCase().includes('catégorisé'))));
+          if (!matchCat) return false;
+        }
 
-      // 3. WiFi Channel / Band (Unified Filter)
-      if (filters.channelFilter && filters.channelFilter !== 'ALL') {
-        if (filters.channelFilter === 'BAND_2_4') {
-          if (ap.band !== '2.4 GHz') return false;
-        } else if (filters.channelFilter === 'BAND_5') {
-          if (ap.band !== '5 GHz') return false;
-        } else if (filters.channelFilter === 'BAND_6') {
-          if (ap.band !== '6 GHz') return false;
-        } else if (filters.channelFilter.startsWith('2G:')) {
-          const target = filters.channelFilter.replace('2G:', '');
-          if (ap.band !== '2.4 GHz' || String(ap.channel) !== target) return false;
-        } else if (filters.channelFilter.startsWith('5G:')) {
-          const target = filters.channelFilter.replace('5G:', '');
-          if (ap.band !== '5 GHz' || String(ap.channel) !== target) return false;
-        } else if (filters.channelFilter.startsWith('6G:')) {
-          const target = filters.channelFilter.replace('6G:', '');
-          if (ap.band !== '6 GHz' || String(ap.channel) !== target) return false;
-        } else {
-          if (String(ap.channel) !== filters.channelFilter) return false;
+        // 3. Bluetooth Protocol Type (BLE vs Classic BT)
+        if (filters.btTypeFilter && filters.btTypeFilter !== 'ALL') {
+          if (filters.btTypeFilter === 'BLE' && ap.btProtocol !== 'BLE' && ap.type !== 'BLE') return false;
+          if (filters.btTypeFilter === 'BT' && (ap.btProtocol === 'BLE' || ap.type === 'BLE')) return false;
+        }
+
+        // 4. Named vs Anonymous Devices Filter
+        if (filters.onlyNamedBtDevices) {
+          const isUnnamed = !ap.ssid || ap.ssid.trim() === '' || ap.ssid.startsWith('<');
+          if (isUnnamed) return false;
+        }
+
+        // 5. Bluetooth Company / Manufacturer Filter
+        if (filters.btCompanyFilter && filters.btCompanyFilter !== 'ALL') {
+          const matchCompany =
+            ap.btCompany === filters.btCompanyFilter ||
+            ap.vendor === filters.btCompanyFilter;
+          if (!matchCompany) return false;
+        }
+      } else {
+        // 1. Search Query (STRICTLY by SSID, BSSID/MAC, or OUI prefix for WiFi)
+        if (filters.searchQuery) {
+          const q = filters.searchQuery.toLowerCase().trim();
+          const matchSsid = ap.ssid.toLowerCase().includes(q);
+          const matchMac = ap.mac.toLowerCase().includes(q);
+          const matchOui = ap.oui.toLowerCase().includes(q);
+          if (!matchSsid && !matchMac && !matchOui) return false;
+        }
+
+        // 2. Direct Encryption / Security Filter
+        if (filters.securityFilter.length > 0 && !filters.securityFilter.includes('ALL')) {
+          if (!filters.securityFilter.includes(ap.security.type)) return false;
+        }
+
+        // 2b. Dynamic Cipher Algorithm Filter (when active security filter is not WEP and cipher filter toggle is enabled)
+        if (
+          filters.isCipherFilterActive &&
+          filters.cipherAlgorithmFilter &&
+          filters.cipherAlgorithmFilter !== 'ALL' &&
+          isEligibleForCipherFilter
+        ) {
+          const target = filters.cipherAlgorithmFilter.toUpperCase();
+          const rawAuth = (ap.authMode || '').toUpperCase();
+          const ciphers = (ap.security.ciphers || []).map((c) => c.toUpperCase());
+          const cipherLabel = (ap.security.cipherLabel || '').toUpperCase();
+          const isWpa3Ent192 =
+            rawAuth.includes('SUITE-B') ||
+            rawAuth.includes('EAP/SHA384') ||
+            rawAuth.includes('EAP-SHA384') ||
+            rawAuth.includes('SHA384') ||
+            ap.security.type === 'WPA3_ENTERPRISE';
+
+          let match = false;
+
+          if (target === 'GCMP-256') {
+            match =
+              rawAuth.includes('GCMP-256') ||
+              (isWpa3Ent192 && rawAuth.includes('GCMP')) ||
+              ciphers.some((c) => c.includes('GCMP-256') || c.includes('256')) ||
+              (cipherLabel.includes('GCMP') && (cipherLabel.includes('256') || isWpa3Ent192));
+          } else if (target === 'GCMP-128') {
+            match =
+              (rawAuth.includes('GCMP-128') || (rawAuth.includes('GCMP') && !rawAuth.includes('256') && !isWpa3Ent192)) ||
+              ciphers.some((c) => c.includes('GCMP-128') || (c.includes('GCMP') && !c.includes('256') && !isWpa3Ent192)) ||
+              (cipherLabel.includes('GCMP') && !cipherLabel.includes('256') && !isWpa3Ent192);
+          } else if (target === 'CCMP-256') {
+            match =
+              rawAuth.includes('CCMP-256') ||
+              (rawAuth.includes('CCMP') && rawAuth.includes('256')) ||
+              ciphers.some((c) => c.includes('CCMP-256') || c.includes('256')) ||
+              (cipherLabel.includes('CCMP') && cipherLabel.includes('256'));
+          } else if (target === 'CCMP') {
+            match =
+              (rawAuth.includes('CCMP') && !rawAuth.includes('256')) ||
+              rawAuth.includes('AES') ||
+              ciphers.some((c) => c.includes('CCMP') || c.includes('AES')) ||
+              cipherLabel.includes('CCMP') ||
+              cipherLabel.includes('AES');
+          } else {
+            match =
+              rawAuth.includes(target) ||
+              ciphers.some((c) => c.includes(target)) ||
+              cipherLabel.includes(target);
+          }
+
+          if (!match) return false;
+        }
+
+        // 3. WiFi Channel / Band (Unified Filter)
+        if (filters.channelFilter && filters.channelFilter !== 'ALL') {
+          if (filters.channelFilter === 'BAND_2_4') {
+            if (ap.band !== '2.4 GHz') return false;
+          } else if (filters.channelFilter === 'BAND_5') {
+            if (ap.band !== '5 GHz') return false;
+          } else if (filters.channelFilter === 'BAND_6') {
+            if (ap.band !== '6 GHz') return false;
+          } else if (filters.channelFilter.startsWith('2G:')) {
+            const target = filters.channelFilter.replace('2G:', '');
+            if (ap.band !== '2.4 GHz' || String(ap.channel) !== target) return false;
+          } else if (filters.channelFilter.startsWith('5G:')) {
+            const target = filters.channelFilter.replace('5G:', '');
+            if (ap.band !== '5 GHz' || String(ap.channel) !== target) return false;
+          } else if (filters.channelFilter.startsWith('6G:')) {
+            const target = filters.channelFilter.replace('6G:', '');
+            if (ap.band !== '6 GHz' || String(ap.channel) !== target) return false;
+          } else {
+            if (String(ap.channel) !== filters.channelFilter) return false;
+          }
+        }
+
+        // 4. WPS Filter (Show / Hide WPS Enabled Networks)
+        if (filters.wpsFilter === 'WPS_ONLY') {
+          const hasWps = ap.hasWps || (ap.authMode || '').toUpperCase().includes('WPS');
+          if (!hasWps) return false;
+        } else if (filters.wpsFilter === 'NO_WPS') {
+          const hasWps = ap.hasWps || (ap.authMode || '').toUpperCase().includes('WPS');
+          if (hasWps) return false;
         }
       }
 
-      // 4. WPS Filter (Show / Hide WPS Enabled Networks)
-      if (filters.wpsFilter === 'WPS_ONLY') {
-        const hasWps = ap.hasWps || (ap.authMode || '').toUpperCase().includes('WPS');
-        if (!hasWps) return false;
-      } else if (filters.wpsFilter === 'NO_WPS') {
-        const hasWps = ap.hasWps || (ap.authMode || '').toUpperCase().includes('WPS');
-        if (hasWps) return false;
-      }
-
+      // Shared filters (Date, Map Location, RSSI, Vendor, OUI, Modified Status)
       // 5. Date / Day Filter
       if (filters.dateFilter && filters.dateFilter !== 'ALL') {
         const apDateKey = extractDateKey(ap.firstSeen);
@@ -572,7 +645,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
 
       return true;
     });
-  }, [accessPoints, filters]);
+  }, [accessPoints, filters, analysisMode]);
 
   // Sort Access Points (Optimized with cached Collator and fast string comparisons)
   const sortedAps = useMemo(() => {
@@ -593,6 +666,24 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
           break;
         case 'vendor':
           comparison = a.vendor < b.vendor ? -1 : a.vendor > b.vendor ? 1 : 0;
+          break;
+        case 'btCompany': {
+          const cA = a.btCompany || a.vendor || '';
+          const cB = b.btCompany || b.vendor || '';
+          comparison = cA < cB ? -1 : cA > cB ? 1 : 0;
+          break;
+        }
+        case 'btCategory': {
+          const catA = language === 'fr' ? (a.btCategoryFr || a.btCategory || '') : (a.btCategoryEn || a.btCategory || '');
+          const catB = language === 'fr' ? (b.btCategoryFr || b.btCategory || '') : (b.btCategoryEn || b.btCategory || '');
+          comparison = catA < catB ? -1 : catA > catB ? 1 : 0;
+          break;
+        }
+        case 'btProtocol':
+          comparison = (a.btProtocol || a.type || '') < (b.btProtocol || b.type || '') ? -1 : 1;
+          break;
+        case 'btAddressType':
+          comparison = (a.btAddressType || '') < (b.btAddressType || '') ? -1 : 1;
           break;
         case 'authMode':
           comparison = a.authMode < b.authMode ? -1 : a.authMode > b.authMode ? 1 : 0;
@@ -625,7 +716,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
       }
       return sortOrder === 'asc' ? comparison : -comparison;
     });
-  }, [filteredAps, sortField, sortOrder]);
+  }, [filteredAps, sortField, sortOrder, language]);
 
   // Pagination
   const totalItems = sortedAps.length;
@@ -796,22 +887,74 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
   };
 
   const hasActiveFilters =
-    filters.searchQuery !== '' ||
-    filters.securityFilter.length > 0 ||
-    filters.channelFilter !== 'ALL' ||
-    filters.dateFilter !== 'ALL' ||
-    filters.wpsFilter !== 'ALL' ||
-    filters.minRssi !== -100 ||
-    filters.vendorFilter !== 'ALL' ||
-    filters.ouiFilter !== 'ALL' ||
-    filters.locationFilter !== null ||
-    Boolean(filters.onlyModifiedNetworks);
+    analysisMode === 'BT'
+      ? filters.searchQuery !== '' ||
+        (filters.btCategoryFilter !== undefined && filters.btCategoryFilter !== 'ALL') ||
+        (filters.btTypeFilter !== undefined && filters.btTypeFilter !== 'ALL') ||
+        (filters.btCompanyFilter !== undefined && filters.btCompanyFilter !== 'ALL') ||
+        Boolean(filters.onlyNamedBtDevices) ||
+        filters.dateFilter !== 'ALL' ||
+        filters.minRssi !== -100 ||
+        filters.vendorFilter !== 'ALL' ||
+        filters.ouiFilter !== 'ALL' ||
+        filters.locationFilter !== null ||
+        Boolean(filters.onlyModifiedNetworks)
+      : filters.searchQuery !== '' ||
+        filters.securityFilter.length > 0 ||
+        filters.channelFilter !== 'ALL' ||
+        filters.dateFilter !== 'ALL' ||
+        filters.wpsFilter !== 'ALL' ||
+        filters.minRssi !== -100 ||
+        filters.vendorFilter !== 'ALL' ||
+        filters.ouiFilter !== 'ALL' ||
+        filters.locationFilter !== null ||
+        Boolean(filters.onlyModifiedNetworks);
+
+  // Extract unique Bluetooth categories from session
+  const btAvailableCategories = useMemo(() => {
+    if (analysisMode !== 'BT') return [];
+    const catMap = new Map<string, { key: string; id: string; nameFr: string; nameEn: string; color: string; count: number }>();
+    sessionAps.forEach((ap) => {
+      const info = resolveBtCategory(ap.authMode || ap.btCategory || ap.btCategoryEn, ap.frequency);
+      const catKey = info.nameEn;
+      const existing = catMap.get(catKey);
+      if (existing) {
+        existing.count++;
+      } else {
+        catMap.set(catKey, {
+          key: catKey,
+          id: info.id,
+          nameFr: ap.btCategoryFr || info.nameFr,
+          nameEn: ap.btCategoryEn || info.nameEn,
+          color: info.color,
+          count: 1,
+        });
+      }
+    });
+    return Array.from(catMap.values())
+      .sort((a, b) => b.count - a.count);
+  }, [sessionAps, analysisMode]);
+
+  // Extract unique Bluetooth companies from session
+  const btAvailableCompanies = useMemo(() => {
+    if (analysisMode !== 'BT') return [];
+    const compMap = new Map<string, number>();
+    sessionAps.forEach((ap) => {
+      const company = ap.btCompany || (ap.vendor && ap.vendor !== '[Unassigned by IEEE]' ? ap.vendor : '');
+      if (company && company.trim() !== '') {
+        compMap.set(company, (compMap.get(company) || 0) + 1);
+      }
+    });
+    return Array.from(compMap.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [sessionAps, analysisMode]);
 
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm dark:shadow-xl p-4 sm:p-6 space-y-4 transition-colors">
       {/* Search Bar & Quick Toggles */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        {/* Search Bar Strictly for SSID, BSSID/MAC, OUI with Search Button */}
+        {/* Search Bar with Search Button */}
         <div className="flex items-center gap-2 flex-1">
           <div className="relative flex-1">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -828,7 +971,11 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                 }
               }}
               placeholder={
-                language === 'fr'
+                analysisMode === 'BT'
+                  ? language === 'fr'
+                    ? 'Effectuer une recherche par nom de périphérique, MAC, fabricant, catégorie...'
+                    : 'Search by device name, MAC, manufacturer, category...'
+                  : language === 'fr'
                   ? 'Effectuer une recherche par SSID, BSSID / MAC, ou préfixe OUI...'
                   : 'Search by SSID, BSSID / MAC, or OUI prefix...'
               }
@@ -903,275 +1050,378 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
       {/* Primary Filters Panel (Open by default) */}
       {showAdvancedFilters && (
         <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-4 animate-fadeIn">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.15fr_1fr] gap-3.5">
-            {/* 1. Direct Encryption Filter */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1">
-                <Lock className="w-3.5 h-3.5 text-indigo-500" />
-                <span>{language === 'fr' ? 'Sécurité / Chiffrement' : 'Security / Encryption'}</span>
-              </label>
-              <select
-                value={filters.securityFilter.length === 1 ? filters.securityFilter[0] : 'ALL'}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  onUpdateFilters((prev) => ({
-                    ...prev,
-                    securityFilter: val === 'ALL' ? [] : [val],
-                  }));
-                  setCurrentPage(1);
-                }}
-                className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:border-cyan-500 font-medium"
-              >
-                <option value="ALL">
-                  {isWigleDevice
-                    ? language === 'fr'
-                      ? 'Tous les protocoles de sécurité'
-                      : 'All Security Protocols'
-                    : language === 'fr'
-                    ? 'Tous les protocoles de sécurité'
-                    : 'All Security Protocols'}
-                </option>
-                <option value="OPEN">{language === 'fr' ? 'Ouvert (Non chiffré + OWE)' : 'Open (Unencrypted + OWE)'}</option>
-                <option value="WEP">WEP</option>
-                <option value="WPA">WPA1 (PSK)</option>
-                {!isWigleDevice && <option value="WPA_WPA2">{language === 'fr' ? 'WPA1 / WPA2 (Mixte)' : 'WPA1 / WPA2 (Mixed)'}</option>}
-                {!isWigleDevice && <option value="WPA1_ENTERPRISE">{language === 'fr' ? 'WPA1 Entreprise' : 'WPA1 Enterprise'}</option>}
-                <option value="WPA2">WPA2 (PSK)</option>
-                {!isWigleDevice && <option value="WPA2_WPA3">{language === 'fr' ? 'WPA2 / WPA3 (Transition)' : 'WPA2 / WPA3 (Transition)'}</option>}
-                {!isWigleDevice && <option value="ENTERPRISE">{language === 'fr' ? 'WPA2 Entreprise' : 'WPA2 Enterprise'}</option>}
-                <option value="WPA3">WPA3 (SAE)</option>
-                {!isWigleDevice && <option value="WPA3_ENTERPRISE">{language === 'fr' ? 'WPA3 Entreprise' : 'WPA3 Enterprise'}</option>}
-              </select>
+          {analysisMode === 'BT' ? (
+            /* Bluetooth Filters Grid */
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              {/* 1. Bluetooth Category Filter */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1">
+                  <Tag className="w-3.5 h-3.5 text-cyan-500" />
+                  <span>{language === 'fr' ? 'Catégorie de périphérique' : 'Device Category'}</span>
+                </label>
+                <select
+                  value={filters.btCategoryFilter || 'ALL'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    onUpdateFilters((prev) => ({
+                      ...prev,
+                      btCategoryFilter: val,
+                    }));
+                    setCurrentPage(1);
+                  }}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:border-cyan-500 font-medium"
+                >
+                  <option value="ALL">
+                    {language === 'fr'
+                      ? `Toutes les catégories (${sessionAps.length.toLocaleString()})`
+                      : `All Categories (${sessionAps.length.toLocaleString()})`}
+                  </option>
+                  {btAvailableCategories.map((c) => (
+                    <option key={c.key} value={c.key}>
+                      {language === 'fr' ? c.nameFr : c.nameEn} ({c.count.toLocaleString()} {language === 'fr' ? (c.count > 1 ? 'périphériques' : 'périphérique') : (c.count > 1 ? 'devices' : 'device')})
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-              {/* Dynamic Cipher Algorithm Filter Toggle & Select (Hidden for WEP or All) */}
-              {isEligibleForCipherFilter && availableAlgorithmsForSelectedSec.length > 0 && (
-                <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-800 space-y-1.5 animate-fadeIn">
-                  <label className="flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300 font-semibold cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(filters.isCipherFilterActive)}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        onUpdateFilters((prev) => ({
-                          ...prev,
-                          isCipherFilterActive: checked,
-                          cipherAlgorithmFilter: checked ? prev.cipherAlgorithmFilter || 'ALL' : 'ALL',
-                        }));
-                        setCurrentPage(1);
-                      }}
-                      className="accent-cyan-500 rounded"
-                    />
-                    <span>{language === 'fr' ? 'Filtrer par algorithme de chiffrement (ex. AES-CCMP)' : 'Filter by cipher algorithm (e.g. AES-CCMP)'}</span>
-                  </label>
+              {/* 2. Named Devices Filter */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1">
+                  <Smartphone className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>{language === 'fr' ? 'Visibilité du nom' : 'Device Name Visibility'}</span>
+                </label>
+                <select
+                  value={filters.onlyNamedBtDevices ? 'NAMED_ONLY' : 'ALL'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    onUpdateFilters((prev) => ({
+                      ...prev,
+                      onlyNamedBtDevices: val === 'NAMED_ONLY',
+                    }));
+                    setCurrentPage(1);
+                  }}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:border-cyan-500 font-medium"
+                >
+                  <option value="ALL">
+                    {language === 'fr' ? 'Tous les périphériques (Nommés et Masqués)' : 'All Devices (Named & Masked)'}
+                  </option>
+                  <option value="NAMED_ONLY">
+                    {language === 'fr' ? 'Périphériques nommés uniquement' : 'Named Devices Only'}
+                  </option>
+                </select>
+              </div>
 
-                  {filters.isCipherFilterActive && (
-                    <select
-                      value={filters.cipherAlgorithmFilter || 'ALL'}
-                      onChange={(e) => {
-                        onUpdateFilters((prev) => ({
-                          ...prev,
-                          cipherAlgorithmFilter: e.target.value,
-                        }));
-                        setCurrentPage(1);
-                      }}
-                      className="w-full bg-white dark:bg-slate-900 border border-cyan-400 dark:border-cyan-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 font-medium animate-fadeIn"
-                    >
-                      <option value="ALL">
-                        {language === 'fr' ? 'Tous les algorithmes' : 'All algorithms / ciphers'}
+              {/* 3. Date / Day Filter */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-teal-500" />
+                  <span>{language === 'fr' ? 'Filtrer par date\u00A0:' : 'Filter by date:'}</span>
+                </label>
+                <select
+                  value={filters.dateFilter}
+                  onChange={(e) => {
+                    onUpdateFilters((prev) => ({ ...prev, dateFilter: e.target.value }));
+                    setCurrentPage(1);
+                  }}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:border-cyan-500 font-medium font-sans"
+                >
+                  <option value="ALL">
+                    {language === 'fr'
+                      ? `Toutes les dates (${availableDates.length > 0 ? availableDates.length : '1'})`
+                      : `All Dates (${availableDates.length > 0 ? availableDates.length : '1'})`}
+                  </option>
+                  {availableDates.map((date) => (
+                    <option key={date} value={date}>
+                      {formatToEuropeanDate(date)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : (
+            /* WiFi Filters Grid */
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1.15fr_1fr] gap-3.5">
+              {/* 1. Direct Encryption Filter */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1">
+                  <Lock className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>{language === 'fr' ? 'Sécurité / Chiffrement' : 'Security / Encryption'}</span>
+                </label>
+                <select
+                  value={filters.securityFilter.length === 1 ? filters.securityFilter[0] : 'ALL'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    onUpdateFilters((prev) => ({
+                      ...prev,
+                      securityFilter: val === 'ALL' ? [] : [val],
+                    }));
+                    setCurrentPage(1);
+                  }}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:border-cyan-500 font-medium"
+                >
+                  <option value="ALL">
+                    {language === 'fr' ? 'Tous les protocoles de sécurité' : 'All Security Protocols'}
+                  </option>
+                  <option value="OPEN">{language === 'fr' ? 'Ouvert (Non chiffré + OWE)' : 'Open (Unencrypted + OWE)'}</option>
+                  <option value="WEP">WEP</option>
+                  <option value="WPA">WPA1 (PSK)</option>
+                  {!isWigleDevice && <option value="WPA_WPA2">{language === 'fr' ? 'WPA1 / WPA2 (Mixte)' : 'WPA1 / WPA2 (Mixed)'}</option>}
+                  {!isWigleDevice && <option value="WPA1_ENTERPRISE">{language === 'fr' ? 'WPA1 Entreprise' : 'WPA1 Enterprise'}</option>}
+                  <option value="WPA2">WPA2 (PSK)</option>
+                  {!isWigleDevice && <option value="WPA2_WPA3">{language === 'fr' ? 'WPA2 / WPA3 (Transition)' : 'WPA2 / WPA3 (Transition)'}</option>}
+                  {!isWigleDevice && <option value="ENTERPRISE">{language === 'fr' ? 'WPA2 Entreprise' : 'WPA2 Enterprise'}</option>}
+                  <option value="WPA3">WPA3 (SAE)</option>
+                  {!isWigleDevice && <option value="WPA3_ENTERPRISE">{language === 'fr' ? 'WPA3 Entreprise' : 'WPA3 Enterprise'}</option>}
+                </select>
+
+                {/* Dynamic Cipher Algorithm Filter */}
+                {isEligibleForCipherFilter && availableAlgorithmsForSelectedSec.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-800 space-y-1.5 animate-fadeIn">
+                    <label className="flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300 font-semibold cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(filters.isCipherFilterActive)}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          onUpdateFilters((prev) => ({
+                            ...prev,
+                            isCipherFilterActive: checked,
+                            cipherAlgorithmFilter: checked ? prev.cipherAlgorithmFilter || 'ALL' : 'ALL',
+                          }));
+                          setCurrentPage(1);
+                        }}
+                        className="accent-cyan-500 rounded"
+                      />
+                      <span>{language === 'fr' ? 'Filtrer par algorithme de chiffrement (ex. AES-CCMP)' : 'Filter by cipher algorithm (e.g. AES-CCMP)'}</span>
+                    </label>
+
+                    {filters.isCipherFilterActive && (
+                      <select
+                        value={filters.cipherAlgorithmFilter || 'ALL'}
+                        onChange={(e) => {
+                          onUpdateFilters((prev) => ({
+                            ...prev,
+                            cipherAlgorithmFilter: e.target.value,
+                          }));
+                          setCurrentPage(1);
+                        }}
+                        className="w-full bg-white dark:bg-slate-900 border border-cyan-400 dark:border-cyan-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 font-medium animate-fadeIn"
+                      >
+                        <option value="ALL">
+                          {language === 'fr' ? 'Tous les algorithmes' : 'All algorithms / ciphers'}
+                        </option>
+                        {availableAlgorithmsForSelectedSec.map(({ algo, count }) => (
+                          <option key={algo} value={algo}>
+                            {algo} ({count.toLocaleString()} {language === 'fr' ? (count > 1 ? 'réseaux' : 'réseau') : (count > 1 ? 'APs' : 'AP')})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 2. WiFi Channel & Band Filter */}
+              <div>
+                <label className={`block text-xs font-semibold mb-1.5 flex items-center gap-1 ${isWigleDevice ? 'text-slate-400 dark:text-slate-600' : 'text-slate-700 dark:text-slate-300'}`}>
+                  <Radio className={`w-3.5 h-3.5 ${isWigleDevice ? 'text-slate-400' : 'text-cyan-500'}`} />
+                  <span>{language === 'fr' ? 'Canal / Bande WiFi' : 'WiFi Channel / Band'}</span>
+                </label>
+                <select
+                  disabled={isWigleDevice}
+                  value={isWigleDevice ? 'ALL' : filters.channelFilter}
+                  onChange={(e) => {
+                    onUpdateFilters((prev) => ({ ...prev, channelFilter: e.target.value }));
+                    setCurrentPage(1);
+                  }}
+                  className={`w-full border rounded-lg px-2.5 py-1.5 text-xs font-medium font-sans ${
+                    isWigleDevice
+                      ? 'opacity-50 cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-800'
+                      : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:border-cyan-500'
+                  }`}
+                  title={isWigleDevice ? (language === 'fr' ? 'Filtre par canal non disponible pour ce fichier' : 'Channel filter unavailable for this file') : undefined}
+                >
+                  <option value="ALL">
+                    {language === 'fr'
+                      ? `Tous les canaux / Toutes les bandes (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'réseaux' : 'réseau'})`
+                      : `All Channels & Bands (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'APs' : 'AP'})`}
+                  </option>
+                  <optgroup label={language === 'fr' ? '── ⚡ Filtrer par bande complète ──' : '── ⚡ Filter by Full Band ──'}>
+                    <option value="BAND_2_4">
+                      {language === 'fr'
+                        ? `Toute la bande 2,4\u00A0GHz (${channelOptions.total24.toLocaleString()} ${channelOptions.total24 > 1 ? 'réseaux' : 'réseau'})`
+                        : `All 2.4 GHz Band (${channelOptions.total24.toLocaleString()} ${channelOptions.total24 > 1 ? 'APs' : 'AP'})`}
+                    </option>
+                    <option value="BAND_5">
+                      {language === 'fr'
+                        ? `Toute la bande 5\u00A0GHz (${channelOptions.total5.toLocaleString()} ${channelOptions.total5 > 1 ? 'réseaux' : 'réseau'})`
+                        : `All 5 GHz Band (${channelOptions.total5.toLocaleString()} ${channelOptions.total5 > 1 ? 'APs' : 'AP'})`}
+                    </option>
+                    {channelOptions.total6 > 0 && (
+                      <option value="BAND_6">
+                        {language === 'fr'
+                          ? `Toute la bande 6\u00A0GHz (${channelOptions.total6.toLocaleString()} ${channelOptions.total6 > 1 ? 'réseaux' : 'réseau'})`
+                          : `All 6 GHz Band (${channelOptions.total6.toLocaleString()} ${channelOptions.total6 > 1 ? 'APs' : 'AP'})`}
                       </option>
-                      {availableAlgorithmsForSelectedSec.map(({ algo, count }) => (
-                        <option key={algo} value={algo}>
-                          {algo} ({count.toLocaleString()} {language === 'fr' ? (count > 1 ? 'réseaux' : 'réseau') : (count > 1 ? 'APs' : 'AP')})
+                    )}
+                  </optgroup>
+                  {channelOptions.band24.length > 0 && (
+                    <optgroup label={language === 'fr' ? '── Canaux 2,4\u00A0GHz (2412 - 2484\u00A0MHz) ──' : '── 2.4 GHz Channels (2412 - 2484 MHz) ──'}>
+                      {channelOptions.band24.map((c) => (
+                        <option key={`2G_${c.ch}`} value={`2G:${c.ch}`}>
+                          {language === 'fr' ? 'Canal' : 'Ch.'} {c.ch} ({c.freq}{language === 'fr' ? '\u00A0MHz' : ' MHz'}) — {c.count.toLocaleString()} {language === 'fr' ? (c.count > 1 ? 'réseaux' : 'réseau') : (c.count > 1 ? 'APs' : 'AP')}
                         </option>
                       ))}
-                    </select>
+                    </optgroup>
                   )}
-                </div>
-              )}
-            </div>
+                  {channelOptions.band5.length > 0 && (
+                    <optgroup label={language === 'fr' ? '── Canaux 5\u00A0GHz (5180 - 5885\u00A0MHz) ──' : '── 5 GHz Channels (5180 - 5885 MHz) ──'}>
+                      {channelOptions.band5.map((c) => (
+                        <option key={`5G_${c.ch}`} value={`5G:${c.ch}`}>
+                          {language === 'fr' ? 'Canal' : 'Ch.'} {c.ch} ({c.freq}{language === 'fr' ? '\u00A0MHz' : ' MHz'}) — {c.count.toLocaleString()} {language === 'fr' ? (c.count > 1 ? 'réseaux' : 'réseau') : (c.count > 1 ? 'APs' : 'AP')}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {channelOptions.band6.length > 0 && (
+                    <optgroup label={language === 'fr' ? '── Canaux 6\u00A0GHz (5955 - 7115\u00A0MHz / WiFi 6E/7) ──' : '── 6 GHz Channels (5955 - 7115 MHz / WiFi 6E/7) ──'}>
+                      {channelOptions.band6.map((c) => (
+                        <option key={`6G_${c.ch}`} value={`6G:${c.ch}`}>
+                          {language === 'fr' ? 'Canal' : 'Ch.'} {c.ch} ({c.freq}{language === 'fr' ? '\u00A0MHz' : ' MHz'}) — {c.count.toLocaleString()} {language === 'fr' ? (c.count > 1 ? 'réseaux' : 'réseau') : (c.count > 1 ? 'APs' : 'AP')}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
 
-            {/* 2. WiFi Channel & Band Filter (Unified by Band with Frequency in MHz) */}
-            <div>
-              <label className={`block text-xs font-semibold mb-1.5 flex items-center gap-1 ${isWigleDevice ? 'text-slate-400 dark:text-slate-600' : 'text-slate-700 dark:text-slate-300'}`}>
-                <Radio className={`w-3.5 h-3.5 ${isWigleDevice ? 'text-slate-400' : 'text-cyan-500'}`} />
-                <span>{language === 'fr' ? 'Canal / Bande WiFi' : 'WiFi Channel / Band'}</span>
-              </label>
-              <select
-                disabled={isWigleDevice}
-                value={isWigleDevice ? 'ALL' : filters.channelFilter}
-                onChange={(e) => {
-                  onUpdateFilters((prev) => ({ ...prev, channelFilter: e.target.value }));
-                  setCurrentPage(1);
-                }}
-                className={`w-full border rounded-lg px-2.5 py-1.5 text-xs font-medium font-sans ${
-                  isWigleDevice
-                    ? 'opacity-50 cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-800'
-                    : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:border-cyan-500'
-                }`}
-                title={isWigleDevice ? (language === 'fr' ? 'Filtre par canal non disponible pour ce fichier' : 'Channel filter unavailable for this file') : undefined}
-              >
-                <option value="ALL">
-                  {language === 'fr'
-                    ? `Tous les canaux / Toutes les bandes (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'réseaux' : 'réseau'})`
-                    : `All Channels & Bands (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'APs' : 'AP'})`}
-                </option>
+              {/* 3. WPS Activation Filter */}
+              <div>
+                <label className={`block text-xs font-semibold mb-1.5 flex items-center gap-1 ${isWigleDevice ? 'text-slate-400 dark:text-slate-600' : 'text-slate-700 dark:text-slate-300'}`}>
+                  <span>{language === 'fr' ? 'Activation WPS' : 'WPS Activation'}</span>
+                </label>
+                <select
+                  disabled={isWigleDevice}
+                  value={isWigleDevice ? 'ALL' : filters.wpsFilter}
+                  onChange={(e) => {
+                    onUpdateFilters((prev) => ({
+                      ...prev,
+                      wpsFilter: e.target.value as 'ALL' | 'HIDE_BADGES' | 'WPS_ONLY' | 'NO_WPS',
+                    }));
+                    setCurrentPage(1);
+                  }}
+                  className={`w-full border rounded-lg px-2.5 py-1.5 text-xs font-medium font-sans ${
+                    isWigleDevice
+                      ? 'opacity-50 cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-800'
+                      : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:border-cyan-500'
+                  }`}
+                  title={isWigleDevice ? (language === 'fr' ? 'Filtre WPS non disponible pour les exports WiGLE' : 'WPS filter unavailable for WiGLE exports') : undefined}
+                >
+                  <option value="ALL">
+                    {language === 'fr' ? 'Afficher les réseaux avec et sans WPS (Indicateur actif)' : 'Show networks with and without WPS (Indicator enabled)'}
+                  </option>
+                  <option value="HIDE_BADGES">
+                    {language === 'fr' ? 'Afficher les réseaux avec et sans WPS (Indicateur désactivé)' : 'Show networks with and without WPS (Indicator disabled)'}
+                  </option>
+                  <option value="WPS_ONLY">
+                    {language === 'fr' ? 'Afficher uniquement les réseaux avec WPS' : 'Show only networks with WPS'}
+                  </option>
+                  <option value="NO_WPS">
+                    {language === 'fr' ? 'Afficher uniquement les réseaux sans WPS' : 'Show only networks without WPS'}
+                  </option>
+                </select>
+              </div>
 
-                {/* Quick Band Direct Filters */}
-                <optgroup label={language === 'fr' ? '── ⚡ Filtrer par bande complète ──' : '── ⚡ Filter by Full Band ──'}>
-                  <option value="BAND_2_4">
+              {/* 4. Date / Day Filter */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-teal-500" />
+                  <span>{language === 'fr' ? 'Filtrer par date\u00A0:' : 'Filter by date:'}</span>
+                </label>
+                <select
+                  value={filters.dateFilter}
+                  onChange={(e) => {
+                    onUpdateFilters((prev) => ({ ...prev, dateFilter: e.target.value }));
+                    setCurrentPage(1);
+                  }}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:border-cyan-500 font-medium font-sans"
+                >
+                  <option value="ALL">
                     {language === 'fr'
-                      ? `Toute la bande 2,4\u00A0GHz (${channelOptions.total24.toLocaleString()} ${channelOptions.total24 > 1 ? 'réseaux' : 'réseau'})`
-                      : `All 2.4 GHz Band (${channelOptions.total24.toLocaleString()} ${channelOptions.total24 > 1 ? 'APs' : 'AP'})`}
+                      ? `Toutes les dates (${availableDates.length > 0 ? availableDates.length : '1'})`
+                      : `All Dates (${availableDates.length > 0 ? availableDates.length : '1'})`}
                   </option>
-                  <option value="BAND_5">
-                    {language === 'fr'
-                      ? `Toute la bande 5\u00A0GHz (${channelOptions.total5.toLocaleString()} ${channelOptions.total5 > 1 ? 'réseaux' : 'réseau'})`
-                      : `All 5 GHz Band (${channelOptions.total5.toLocaleString()} ${channelOptions.total5 > 1 ? 'APs' : 'AP'})`}
-                  </option>
-                  {channelOptions.total6 > 0 && (
-                    <option value="BAND_6">
-                      {language === 'fr'
-                        ? `Toute la bande 6\u00A0GHz (${channelOptions.total6.toLocaleString()} ${channelOptions.total6 > 1 ? 'réseaux' : 'réseau'})`
-                        : `All 6 GHz Band (${channelOptions.total6.toLocaleString()} ${channelOptions.total6 > 1 ? 'APs' : 'AP'})`}
+                  {availableDates.map((date) => (
+                    <option key={date} value={date}>
+                      {formatToEuropeanDate(date)}
                     </option>
-                  )}
-                </optgroup>
-
-                {/* 2.4 GHz Channels */}
-                {channelOptions.band24.length > 0 && (
-                  <optgroup label={language === 'fr' ? '── Canaux 2,4\u00A0GHz (2412 - 2484\u00A0MHz) ──' : '── 2.4 GHz Channels (2412 - 2484 MHz) ──'}>
-                    {channelOptions.band24.map((c) => (
-                      <option key={`2G_${c.ch}`} value={`2G:${c.ch}`}>
-                        {language === 'fr' ? 'Canal' : 'Ch.'} {c.ch} ({c.freq}{language === 'fr' ? '\u00A0MHz' : ' MHz'}) — {c.count.toLocaleString()} {language === 'fr' ? (c.count > 1 ? 'réseaux' : 'réseau') : (c.count > 1 ? 'APs' : 'AP')}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-
-                {/* 5 GHz Channels */}
-                {channelOptions.band5.length > 0 && (
-                  <optgroup label={language === 'fr' ? '── Canaux 5\u00A0GHz (5180 - 5885\u00A0MHz) ──' : '── 5 GHz Channels (5180 - 5885 MHz) ──'}>
-                    {channelOptions.band5.map((c) => (
-                      <option key={`5G_${c.ch}`} value={`5G:${c.ch}`}>
-                        {language === 'fr' ? 'Canal' : 'Ch.'} {c.ch} ({c.freq}{language === 'fr' ? '\u00A0MHz' : ' MHz'}) — {c.count.toLocaleString()} {language === 'fr' ? (c.count > 1 ? 'réseaux' : 'réseau') : (c.count > 1 ? 'APs' : 'AP')}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-
-                {/* 6 GHz Channels */}
-                {channelOptions.band6.length > 0 && (
-                  <optgroup label={language === 'fr' ? '── Canaux 6\u00A0GHz (5955 - 7115\u00A0MHz / WiFi 6E/7) ──' : '── 6 GHz Channels (5955 - 7115 MHz / WiFi 6E/7) ──'}>
-                    {channelOptions.band6.map((c) => (
-                      <option key={`6G_${c.ch}`} value={`6G:${c.ch}`}>
-                        {language === 'fr' ? 'Canal' : 'Ch.'} {c.ch} ({c.freq}{language === 'fr' ? '\u00A0MHz' : ' MHz'}) — {c.count.toLocaleString()} {language === 'fr' ? (c.count > 1 ? 'réseaux' : 'réseau') : (c.count > 1 ? 'APs' : 'AP')}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
+                  ))}
+                </select>
+              </div>
             </div>
+          )}
 
-            {/* 3. WPS Activation Filter (Show/Hide WPS) */}
-            <div>
-              <label className={`block text-xs font-semibold mb-1.5 flex items-center gap-1 ${isWigleDevice ? 'text-slate-400 dark:text-slate-600' : 'text-slate-700 dark:text-slate-300'}`}>
-                <span>{language === 'fr' ? 'Activation WPS' : 'WPS Activation'}</span>
-              </label>
-              <select
-                disabled={isWigleDevice}
-                value={isWigleDevice ? 'ALL' : filters.wpsFilter}
-                onChange={(e) => {
-                  onUpdateFilters((prev) => ({
-                    ...prev,
-                    wpsFilter: e.target.value as 'ALL' | 'HIDE_BADGES' | 'WPS_ONLY' | 'NO_WPS',
-                  }));
-                  setCurrentPage(1);
-                }}
-                className={`w-full border rounded-lg px-2.5 py-1.5 text-xs font-medium font-sans ${
-                  isWigleDevice
-                    ? 'opacity-50 cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-800'
-                    : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:border-cyan-500'
-                }`}
-                title={isWigleDevice ? (language === 'fr' ? 'Filtre WPS non disponible pour les exports WiGLE' : 'WPS filter unavailable for WiGLE exports') : undefined}
-              >
-                <option value="ALL">
-                  {language === 'fr' ? 'Afficher les réseaux avec et sans WPS (Indicateur actif)' : 'Show networks with and without WPS (Indicator enabled)'}
-                </option>
-                <option value="HIDE_BADGES">
-                  {language === 'fr' ? 'Afficher les réseaux avec et sans WPS (Indicateur désactivé)' : 'Show networks with and without WPS (Indicator disabled)'}
-                </option>
-                <option value="WPS_ONLY">
-                  {language === 'fr' ? 'Afficher uniquement les réseaux avec WPS' : 'Show only networks with WPS'}
-                </option>
-                <option value="NO_WPS">
-                  {language === 'fr' ? 'Afficher uniquement les réseaux sans WPS' : 'Show only networks without WPS'}
-                </option>
-              </select>
-            </div>
-
-            {/* 4. Date / Day Filter (if multiple dates available) */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1">
-                <Calendar className="w-3.5 h-3.5 text-teal-500" />
-                <span>{language === 'fr' ? 'Filtrer les résultats pour une date spécifique\u00A0:' : 'Filter the results to a specific date:'}</span>
-              </label>
-              <select
-                value={filters.dateFilter}
-                onChange={(e) => {
-                  onUpdateFilters((prev) => ({ ...prev, dateFilter: e.target.value }));
-                  setCurrentPage(1);
-                }}
-                className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:border-cyan-500 font-medium font-sans"
-              >
-                <option value="ALL">
-                  {language === 'fr'
-                    ? `Toutes les dates (${availableDates.length > 0 ? availableDates.length : '1'})`
-                    : `All Dates (${availableDates.length > 0 ? availableDates.length : '1'})`}
-                </option>
-                {availableDates.map((date) => (
-                  <option key={date} value={date}>
-                    {formatToEuropeanDate(date)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Secondary Filter Row: Vendor, OUI Prefix & Signal Slider */}
+          {/* Secondary Filter Row: Vendor/Company, OUI Prefix & Signal Slider */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-2 border-t border-slate-200 dark:border-slate-800/60">
-            {/* Vendor Filter */}
+            {/* Vendor / Company Filter */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                {language === 'fr' ? 'Filtrage par fabricant' : 'Filter by manufacturer'}
+                {analysisMode === 'BT'
+                  ? (language === 'fr' ? 'Filtrage par fabricant' : 'Filter by manufacturer')
+                  : (language === 'fr' ? 'Filtrage par fabricant' : 'Filter by manufacturer')}
               </label>
               <select
-                value={filters.vendorFilter}
+                value={analysisMode === 'BT' ? (filters.btCompanyFilter || filters.vendorFilter || 'ALL') : filters.vendorFilter}
                 onChange={(e) => {
-                  onUpdateFilters((prev) => ({ ...prev, vendorFilter: e.target.value }));
+                  const val = e.target.value;
+                  if (analysisMode === 'BT') {
+                    onUpdateFilters((prev) => ({
+                      ...prev,
+                      btCompanyFilter: val,
+                      vendorFilter: val,
+                    }));
+                  } else {
+                    onUpdateFilters((prev) => ({ ...prev, vendorFilter: val }));
+                  }
                   setCurrentPage(1);
                 }}
                 className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:border-cyan-500 font-sans font-medium"
               >
                 <option value="ALL">
-                  {language === 'fr'
-                    ? `Afficher tous les fabricants (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'réseaux' : 'réseau'})`
-                    : `Show all manufacturers (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'APs' : 'AP'})`}
+                  {analysisMode === 'BT'
+                    ? (language === 'fr'
+                        ? `Afficher tous les fabricants (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'périphériques' : 'périphérique'})`
+                        : `Show all manufacturers (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'devices' : 'device'})`)
+                    : (language === 'fr'
+                        ? `Afficher tous les fabricants (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'réseaux' : 'réseau'})`
+                        : `Show all manufacturers (${sessionAps.length.toLocaleString()} ${sessionAps.length > 1 ? 'APs' : 'AP'})`)}
                 </option>
-                {hasUnassignedVendor && (
-                  <option value="[Unassigned by IEEE]">
-                    {language === 'fr' ? "[Non assigné par l'IEEE]" : '[Unassigned by IEEE]'} ({unassignedCount.toLocaleString()} {language === 'fr' ? (unassignedCount > 1 ? 'réseaux' : 'réseau') : (unassignedCount > 1 ? 'APs' : 'AP')})
-                  </option>
-                )}
-                <option disabled className="text-slate-400">
-                  ────────────────────────────
-                </option>
-                <optgroup label={language === 'fr' ? '── Fabricants enregistrés à l\'IEEE ──' : '─ IEEE-registered Manufacturers ──'}>
-                  {namedVendorsWithCount.map(({ name, count }) => (
+
+                {analysisMode === 'BT' ? (
+                  btAvailableCompanies.map(({ name, count }) => (
                     <option key={name} value={name}>
-                      {name} ({count.toLocaleString()} {language === 'fr' ? (count > 1 ? 'réseaux' : 'réseau') : (count > 1 ? 'APs' : 'AP')})
+                      {name} ({count.toLocaleString()} {language === 'fr' ? (count > 1 ? 'périphériques' : 'périphérique') : (count > 1 ? 'devices' : 'device')})
                     </option>
-                  ))}
-                </optgroup>
+                  ))
+                ) : (
+                  <>
+                    {hasUnassignedVendor && (
+                      <option value="[Unassigned by IEEE]">
+                        {language === 'fr' ? "[Non assigné par l'IEEE]" : '[Unassigned by IEEE]'} ({unassignedCount.toLocaleString()} {language === 'fr' ? (unassignedCount > 1 ? 'réseaux' : 'réseau') : (unassignedCount > 1 ? 'APs' : 'AP')})
+                      </option>
+                    )}
+                    <option disabled className="text-slate-400">
+                      ────────────────────────────
+                    </option>
+                    <optgroup label={language === 'fr' ? '── Fabricants enregistrés à l\'IEEE ──' : '─ IEEE-registered Manufacturers ──'}>
+                      {namedVendorsWithCount.map(({ name, count }) => (
+                        <option key={name} value={name}>
+                          {name} ({count.toLocaleString()} {language === 'fr' ? (count > 1 ? 'réseaux' : 'réseau') : (count > 1 ? 'APs' : 'AP')})
+                        </option>
+                      ))}
+                    </optgroup>
+                  </>
+                )}
               </select>
             </div>
 
@@ -1195,7 +1445,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                 </option>
                 {availableOuisWithCount.map(({ oui, count, vendor }) => (
                   <option key={oui} value={oui}>
-                    {oui} ({vendor}) — {count.toLocaleString()} {language === 'fr' ? (count > 1 ? 'réseaux' : 'réseau') : (count > 1 ? 'APs' : 'AP')}
+                    {oui} ({vendor}) — {count.toLocaleString()} {language === 'fr' ? (count > 1 ? 'entrées' : 'entrée') : (count > 1 ? 'entries' : 'entry')}
                   </option>
                 ))}
               </select>
@@ -1264,29 +1514,31 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
               </div>
             </div>
 
-            {/* Modified Networks Only Toggle Filter */}
-            <div className="flex items-center gap-2 pt-2 border-t border-slate-200/80 dark:border-slate-800/80 col-span-full">
-              <label className="inline-flex items-center gap-2.5 cursor-pointer select-none text-xs font-semibold text-slate-800 dark:text-slate-200 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={Boolean(filters.onlyModifiedNetworks)}
-                  onChange={(e) => {
-                    onUpdateFilters((prev) => ({
-                      ...prev,
-                      onlyModifiedNetworks: e.target.checked,
-                    }));
-                    setCurrentPage(1);
-                  }}
-                  className="w-4 h-4 text-cyan-600 rounded border-slate-300 dark:border-slate-700 focus:ring-cyan-500 cursor-pointer accent-cyan-600"
-                />
-                <History className="w-4 h-4 text-amber-500 shrink-0" />
-                <span>
-                  {language === 'fr'
-                    ? 'Afficher uniquement les réseaux modifiés au fil du temps (Nouveau SSID ou changement de chiffrement)'
-                    : 'Show only networks modified over time (New SSID or encryption change)'}
-                </span>
-              </label>
-            </div>
+            {/* Modified Networks Only Toggle Filter (WiFi Only) */}
+            {analysisMode !== 'BT' && (
+              <div className="flex items-center gap-2 pt-2 border-t border-slate-200/80 dark:border-slate-800/80 col-span-full">
+                <label className="inline-flex items-center gap-2.5 cursor-pointer select-none text-xs font-semibold text-slate-800 dark:text-slate-200 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(filters.onlyModifiedNetworks)}
+                    onChange={(e) => {
+                      onUpdateFilters((prev) => ({
+                        ...prev,
+                        onlyModifiedNetworks: e.target.checked,
+                      }));
+                      setCurrentPage(1);
+                    }}
+                    className="w-4 h-4 text-cyan-600 rounded border-slate-300 dark:border-slate-700 focus:ring-cyan-500 cursor-pointer accent-cyan-600"
+                  />
+                  <History className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span>
+                    {language === 'fr'
+                      ? 'Afficher uniquement les réseaux modifiés au fil du temps (Nouveau SSID ou évolution de chiffrement)'
+                      : 'Show only networks modified over time (New SSID or encryption change)'}
+                  </span>
+                </label>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1307,7 +1559,9 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
             <strong className="text-slate-900 dark:text-white font-sans font-bold">
               {totalItems.toLocaleString()}
             </strong>{' '}
-            {language === 'fr' ? 'réseaux' : 'networks'}
+            {analysisMode === 'BT'
+              ? (language === 'fr' ? (totalItems > 1 ? 'périphériques' : 'périphérique') : (totalItems > 1 ? 'devices' : 'device'))
+              : (language === 'fr' ? (totalItems > 1 ? 'réseaux' : 'réseau') : (totalItems > 1 ? 'networks' : 'network'))}
           </span>
           {selectedAp && (
             <span className="hidden md:inline px-2 py-0.5 rounded bg-cyan-100 dark:bg-cyan-950 border border-cyan-300 dark:border-cyan-800 text-cyan-800 dark:text-cyan-300 text-[11px]">
@@ -1362,98 +1616,174 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
         </div>
       </div>
 
-      {/* Main Unified Network Table */}
+      {/* Main Unified Network / Bluetooth Table */}
       <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm bg-white dark:bg-slate-900">
         <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300 border-collapse">
           <thead className="bg-slate-100/90 dark:bg-slate-950/80 backdrop-blur-md text-slate-700 dark:text-slate-300 uppercase font-bold text-[10.5px] border-b border-slate-200 dark:border-slate-800">
-            <tr>
-              <th className="w-6 px-1 py-2.5 text-center" title={language === 'fr' ? 'Déplier toutes les observations' : 'Expand all scan detections'}>
-                <Layers className="w-3.5 h-3.5 mx-auto text-slate-400" />
-              </th>
-              <th
-                onClick={() => handleSort('ssid')}
-                className="px-2 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
-              >
-                <div className="flex items-center gap-1">
-                  <span>{t('table.colSsid')}</span>
-                  {renderSortIndicator('ssid')}
-                </div>
-              </th>
-              <th
-                onClick={() => handleSort('mac')}
-                className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap"
-              >
-                <div className="flex items-center gap-1">
-                  <span>{t('table.colMac')}</span>
-                  {renderSortIndicator('mac')}
-                </div>
-              </th>
-              <th
-                onClick={() => handleSort('vendor')}
-                className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
-              >
-                <div className="flex items-center gap-1">
-                  <span>{t('table.colVendor')}</span>
-                  {renderSortIndicator('vendor')}
-                </div>
-              </th>
-              <th
-                onClick={() => handleSort('authMode')}
-                className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
-              >
-                <div className="flex items-center gap-1">
-                  <span>{t('table.colSecurity')}</span>
-                  {renderSortIndicator('authMode')}
-                </div>
-              </th>
-              {!isWigleDevice && (
+            {analysisMode === 'BT' ? (
+              /* Bluetooth Table Headers */
+              <tr>
+                <th className="w-6 px-1 py-2.5 text-center" title={language === 'fr' ? 'Déplier toutes les observations' : 'Expand all detections'}>
+                  <Layers className="w-3.5 h-3.5 mx-auto text-slate-400" />
+                </th>
                 <th
-                  onClick={() => handleSort('channel')}
+                  onClick={() => handleSort('ssid')}
+                  className="px-2 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>{t('bt.colName')}</span>
+                    {renderSortIndicator('ssid')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('mac')}
+                  className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>{t('bt.colMac')}</span>
+                    {renderSortIndicator('mac')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('btCategory')}
+                  className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>{t('bt.colCategory')}</span>
+                    {renderSortIndicator('btCategory')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('btCompany')}
+                  className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>{t('bt.colCompany')}</span>
+                    {renderSortIndicator('btCompany')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('bestRssi')}
                   className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap text-center"
                 >
                   <div className="flex items-center justify-center gap-1">
-                    <span>{t('table.colChannel')}</span>
-                    {renderSortIndicator('channel')}
+                    <span>{t('table.colSignal')}</span>
+                    {renderSortIndicator('bestRssi')}
                   </div>
                 </th>
-              )}
-              <th
-                onClick={() => handleSort('bestRssi')}
-                className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap text-center"
-              >
-                <div className="flex items-center justify-center gap-1">
-                  <span>{t('table.colSignal')}</span>
-                  {renderSortIndicator('bestRssi')}
-                </div>
-              </th>
-              <th
-                onClick={() => handleSort('firstSeen')}
-                className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap text-center"
-              >
-                <div className="flex items-center justify-center gap-1">
-                  <span>{t('table.colFirstSeen')}</span>
-                  {renderSortIndicator('firstSeen')}
-                </div>
-              </th>
-              <th
-                onClick={() => handleSort('observationCount')}
-                className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors text-center whitespace-nowrap"
-              >
-                <div className="flex items-center justify-center gap-1">
-                  <span>{t('table.colDetections')}</span>
-                  {renderSortIndicator('observationCount')}
-                </div>
-              </th>
-              <th className="px-2 py-2.5 text-center whitespace-nowrap">
-                {t('table.colActions')}
-              </th>
-            </tr>
+                <th
+                  onClick={() => handleSort('firstSeen')}
+                  className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap text-center"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>{t('table.colFirstSeen')}</span>
+                    {renderSortIndicator('firstSeen')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('observationCount')}
+                  className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors text-center whitespace-nowrap"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>{t('table.colDetections')}</span>
+                    {renderSortIndicator('observationCount')}
+                  </div>
+                </th>
+                <th className="px-2 py-2.5 text-center whitespace-nowrap">
+                  {t('table.colActions')}
+                </th>
+              </tr>
+            ) : (
+              /* WiFi Table Headers */
+              <tr>
+                <th className="w-6 px-1 py-2.5 text-center" title={language === 'fr' ? 'Déplier toutes les observations' : 'Expand all scan detections'}>
+                  <Layers className="w-3.5 h-3.5 mx-auto text-slate-400" />
+                </th>
+                <th
+                  onClick={() => handleSort('ssid')}
+                  className="px-2 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>{t('table.colSsid')}</span>
+                    {renderSortIndicator('ssid')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('mac')}
+                  className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>{t('table.colMac')}</span>
+                    {renderSortIndicator('mac')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('vendor')}
+                  className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>{t('table.colVendor')}</span>
+                    {renderSortIndicator('vendor')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('authMode')}
+                  className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>{t('table.colSecurity')}</span>
+                    {renderSortIndicator('authMode')}
+                  </div>
+                </th>
+                {!isWigleDevice && (
+                  <th
+                    onClick={() => handleSort('channel')}
+                    className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap text-center"
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      <span>{t('table.colChannel')}</span>
+                      {renderSortIndicator('channel')}
+                    </div>
+                  </th>
+                )}
+                <th
+                  onClick={() => handleSort('bestRssi')}
+                  className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap text-center"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>{t('table.colSignal')}</span>
+                    {renderSortIndicator('bestRssi')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('firstSeen')}
+                  className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors whitespace-nowrap text-center"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>{t('table.colFirstSeen')}</span>
+                    {renderSortIndicator('firstSeen')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('observationCount')}
+                  className="px-1.5 py-2.5 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors text-center whitespace-nowrap"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>{t('table.colDetections')}</span>
+                    {renderSortIndicator('observationCount')}
+                  </div>
+                </th>
+                <th className="px-2 py-2.5 text-center whitespace-nowrap">
+                  {t('table.colActions')}
+                </th>
+              </tr>
+            )}
           </thead>
 
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800/60 font-medium">
             {paginatedAps.length === 0 ? (
               <tr>
-                <td colSpan={isWigleDevice ? 9 : 10} className="px-4 py-12 text-center text-slate-500 dark:text-slate-400">
+                <td colSpan={11} className="px-4 py-12 text-center text-slate-500 dark:text-slate-400">
                   <div className="flex flex-col items-center justify-center space-y-2 max-w-lg mx-auto">
                     {filters.onlyModifiedNetworks ? (
                       <History className="w-8 h-8 text-cyan-600 dark:text-cyan-400 mb-1" />
@@ -1462,17 +1792,21 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                     )}
                     <p className="text-sm font-bold text-slate-900 dark:text-white">
                       {filters.onlyModifiedNetworks
-                        ? (language === 'fr' ? 'Aucun réseau modifié au fil du temps' : 'No networks modified over time')
-                        : (language === 'fr' ? 'Aucun réseau ne correspond à vos critères' : 'No networks match your criteria')}
+                        ? (language === 'fr'
+                            ? (analysisMode === 'BT' ? 'Aucun périphérique Bluetooth modifié au fil du temps' : 'Aucun réseau modifié au fil du temps')
+                            : (analysisMode === 'BT' ? 'No Bluetooth devices modified over time' : 'No networks modified over time'))
+                        : (language === 'fr'
+                            ? (analysisMode === 'BT' ? 'Aucun périphérique Bluetooth ne correspond à vos critères' : 'Aucun réseau ne correspond à vos critères')
+                            : (analysisMode === 'BT' ? 'No Bluetooth devices match your criteria' : 'No networks match your criteria'))}
                     </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
                       {filters.onlyModifiedNetworks
                         ? (language === 'fr'
-                            ? 'Aucun changement de SSID ni de protocole de chiffrement n\'a été détecté entre les différentes captures.'
-                            : 'No SSID or encryption changes were detected across the different scan captures.')
+                            ? 'Aucun changement de nom ou de paramètre n\'a été détecté entre les différentes captures.'
+                            : 'No changes were detected across the different scan captures.')
                         : (language === 'fr'
-                            ? 'Aucun réseau ne correspond à votre recherche ou à vos filtres actifs.'
-                            : 'No networks match your active search query or filters.')}
+                            ? 'Aucun élément ne correspond à votre recherche ou à vos filtres actifs.'
+                            : 'No items match your active search query or filters.')}
                     </p>
                     {filters.onlyModifiedNetworks && (
                       <div className="pt-2">
@@ -1484,8 +1818,8 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                           <RotateCcw className="w-3.5 h-3.5" />
                           <span>
                             {language === 'fr'
-                              ? 'Désactiver le filtre des réseaux modifiés'
-                              : 'Disable modified networks filter'}
+                              ? 'Désactiver le filtre des éléments modifiés'
+                              : 'Disable modified filter'}
                           </span>
                         </button>
                       </div>
@@ -1498,13 +1832,400 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                 const isSelected = selectedAp?.mac === ap.mac;
                 const isExpanded = expandedMacs.has(ap.mac);
                 const hasMultipleDetections = ap.observationCount > 1;
+                const isModifiedAp = ap.isModified ?? (ap.hasSsidChanged !== undefined ? Boolean(ap.hasSsidChanged || ap.hasSecurityChanged) : (hasMultipleDetections ? Boolean(analyzeNetworkHistory(ap).hasSsidChanged || analyzeNetworkHistory(ap).hasSecurityChanged) : false));
+                const history = isModifiedAp ? analyzeNetworkHistory(ap) : null;
+
+                if (analysisMode === 'BT') {
+                  // Bluetooth Row Rendering
+                  const catLabel = language === 'fr' ? (ap.btCategoryFr || ap.btCategory || 'Divers') : (ap.btCategoryEn || ap.btCategory || 'Misc');
+                  const catColor = ap.btColor || '#64748b';
+                  const companyName = ap.btCompany || (ap.vendor && ap.vendor !== '[Unassigned by IEEE]' ? ap.vendor : '');
+
+                  return (
+                    <React.Fragment key={ap.mac}>
+                      <tr
+                        onClick={() => {
+                          if (hasMultipleDetections) {
+                            toggleExpand(ap.mac);
+                          }
+                        }}
+                        className={`hover:bg-slate-50 dark:hover:bg-slate-800/60 ${
+                          hasMultipleDetections ? 'cursor-pointer' : ''
+                        } transition-colors ${
+                          isSelected
+                            ? 'bg-cyan-50/80 dark:bg-cyan-950/40 border-l-4 border-l-cyan-500'
+                            : ''
+                        } ${isExpanded ? 'bg-slate-50/50 dark:bg-slate-900/80' : ''}`}
+                      >
+                        {/* Accordion Expand Toggle Button */}
+                        <td
+                          className="w-6 px-1 py-2 text-center"
+                          onClick={(e) => {
+                            if (hasMultipleDetections) {
+                              toggleExpand(ap.mac, e);
+                            }
+                          }}
+                        >
+                          {hasMultipleDetections ? (
+                            <button
+                              type="button"
+                              className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-cyan-600 dark:text-cyan-400 font-bold transition-colors"
+                              title={
+                                isExpanded
+                                  ? (language === 'fr' ? "Replier l'historique des détections" : 'Collapse detections history')
+                                  : (language === 'fr' ? `Déplier les ${ap.observationCount} détections` : `Expand all ${ap.observationCount} detections`)
+                              }
+                            >
+                              {isExpanded ? (
+                                <ChevronUp className="w-3.5 h-3.5" />
+                              ) : (
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          ) : (
+                            <span className="w-3.5 h-3.5 inline-block" />
+                          )}
+                        </td>
+
+                        {/* Device Name with Bluetooth Icon */}
+                        <td className="px-2 py-2">
+                          <div className="flex items-center gap-1.5">
+                            <Bluetooth className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                            {ap.ssid ? (
+                              <TruncatedSsid ssid={ap.ssid} />
+                            ) : (
+                              <span className="text-slate-400 italic text-[11px]">
+                                &lt;{language === 'fr' ? 'Nom masqué' : 'Hidden Name'}&gt;
+                              </span>
+                            )}
+                            {history && history.hasSsidChanged && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setHistoryModalAp(ap);
+                                  setHistoryModalType('SSID');
+                                }}
+                                title={
+                                  language === 'fr'
+                                    ? `Changement de nom détecté (${history.ssidTimeline.length} noms constatés) ! Cliquez pour voir l'historique.`
+                                    : `Name change detected (${history.ssidTimeline.length} names recorded)! Click to view history.`
+                                }
+                                className="p-1 rounded bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/80 dark:hover:bg-amber-900 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700/80 transition-all cursor-pointer shrink-0 shadow-2xs"
+                              >
+                                <History className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* BD_ADDR / MAC */}
+                        <td className="px-1.5 py-2 font-sans font-bold text-xs tracking-tight text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                          {ap.mac}
+                        </td>
+
+                        {/* Category Badge */}
+                        <td className="px-1.5 py-2">
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-semibold border shadow-2xs whitespace-nowrap"
+                            style={{
+                              backgroundColor: `${catColor}15`,
+                              borderColor: `${catColor}40`,
+                              color: catColor,
+                            }}
+                            title={catLabel}
+                          >
+                            <Tag className="w-2.5 h-2.5" />
+                            <span className="truncate max-w-[130px]">{catLabel}</span>
+                          </span>
+                        </td>
+
+                        {/* Manufacturer / SIG */}
+                        <td className="px-1.5 py-2">
+                          <span
+                            className={`truncate block max-w-[110px] lg:max-w-[150px] ${
+                              !companyName || companyName === '[Unassigned by IEEE]'
+                                ? 'text-slate-400 dark:text-slate-500 italic'
+                                : 'text-slate-800 dark:text-slate-200 font-medium'
+                            }`}
+                            title={companyName || (language === 'fr' ? '[Non assigné par l\'IEEE]' : '[Unassigned by IEEE]')}
+                          >
+                            {companyName || (language === 'fr' ? '[Non assigné par l\'IEEE]' : '[Unassigned by IEEE]')}
+                          </span>
+                        </td>
+
+                        {/* Best RSSI */}
+                        <td className="px-1.5 py-2 whitespace-nowrap text-center">
+                          {getRssiBadge(ap.bestRssi)}
+                        </td>
+
+                        {/* First Seen */}
+                        <td className="px-1.5 py-2 text-slate-600 dark:text-slate-300 text-[11px] whitespace-nowrap font-sans font-medium text-center">
+                          {formatToEuropeanDate(ap.firstSeen)}
+                        </td>
+
+                        {/* Detections Count */}
+                        <td
+                          className="px-1.5 py-2 text-center whitespace-nowrap select-none"
+                          onClick={(e) => {
+                            if (hasMultipleDetections) {
+                              toggleExpand(ap.mac, e);
+                            }
+                          }}
+                        >
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              hasMultipleDetections
+                                ? 'bg-cyan-100 dark:bg-cyan-900/60 text-cyan-800 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-700/60'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                            }`}
+                          >
+                            <Layers className="w-3 h-3" />
+                            <span>{ap.observationCount}x</span>
+                          </span>
+                        </td>
+
+                        {/* Actions */}
+                        <td
+                          className="px-1.5 py-2 text-center whitespace-nowrap"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (selectedAp?.mac === ap.mac) {
+                                  onSelectAp(null as any);
+                                } else {
+                                  onSelectAp(ap);
+                                  const mapEl = document.getElementById('wigle-map-section');
+                                  if (mapEl) {
+                                    mapEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                  } else {
+                                    window.scrollTo({ top: 400, behavior: 'smooth' });
+                                  }
+                                }
+                              }}
+                              title={language === 'fr' ? 'Centrer sur la carte' : 'Center on Map'}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-cyan-600 hover:bg-cyan-700 text-white dark:bg-cyan-500 dark:text-slate-950 dark:hover:bg-cyan-400 transition-all font-bold text-[11px] shadow-xs cursor-pointer"
+                            >
+                              <MapPin className="w-3 h-3 shrink-0" />
+                              <span>{t('table.btnMap')}</span>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onInspectAp(ap);
+                              }}
+                              title={language === 'fr' ? 'Inspecter les détails du périphérique' : 'Inspect Device Details'}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400 transition-all font-bold text-[11px] shadow-xs cursor-pointer"
+                            >
+                              <Info className="w-3 h-3 shrink-0" />
+                              <span>{t('table.btnDetails')}</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* Expandable Sub-panel for Bluetooth */}
+                      {isExpanded && (
+                        <tr className="bg-slate-50/80 dark:bg-slate-950/80 border-t border-b border-cyan-500/20">
+                          <td colSpan={9} className="p-3 sm:p-4">
+                            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-3 shadow-inner space-y-2">
+                              <div className="flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-300 pb-1.5 border-b border-slate-200 dark:border-slate-800">
+                                <span className="flex items-center gap-1.5 text-cyan-600 dark:text-cyan-400">
+                                  <Clock className="w-3.5 h-3.5" />
+                                  {language === 'fr'
+                                    ? `Toutes les détections Bluetooth (${ap.observationCount} détections enregistrées)`
+                                    : `All Bluetooth detections (${ap.observationCount} detections recorded)`}
+                                </span>
+                              </div>
+
+                              <div className="max-h-[350px] overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-800 custom-scrollbar">
+                                <table className="w-full text-left text-xs">
+                                  <thead className="bg-slate-100 dark:bg-slate-950 text-slate-600 dark:text-slate-400 font-semibold border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10 select-none">
+                                    <tr>
+                                      <th
+                                        onClick={() => handleSubTableSort('index')}
+                                        className="px-3 py-2 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                                      >
+                                        <div className="flex items-center gap-1">
+                                          <span>#</span>
+                                          {renderSubTableSortIndicator('index')}
+                                        </div>
+                                      </th>
+                                      <th
+                                        onClick={() => handleSubTableSort('timestamp')}
+                                        className="px-3 py-2 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                                      >
+                                        <div className="flex items-center gap-1">
+                                          <span>{language === 'fr' ? 'Horodatage' : 'Observation Timestamp'}</span>
+                                          {renderSubTableSortIndicator('timestamp')}
+                                        </div>
+                                      </th>
+                                      <th
+                                        onClick={() => handleSubTableSort('rssi')}
+                                        className="px-3 py-2 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                                      >
+                                        <div className="flex items-center gap-1">
+                                          <span>{language === 'fr' ? 'Signal (RSSI)' : 'Signal (RSSI)'}</span>
+                                          {renderSubTableSortIndicator('rssi')}
+                                        </div>
+                                      </th>
+                                      <th
+                                        onClick={() => handleSubTableSort('ssid')}
+                                        className="px-3 py-2 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                                      >
+                                        <div className="flex items-center gap-1">
+                                          <span>{language === 'fr' ? 'Nom du périphérique' : 'Device Name'}</span>
+                                          {renderSubTableSortIndicator('ssid')}
+                                        </div>
+                                      </th>
+                                      <th
+                                        onClick={() => handleSubTableSort('lat')}
+                                        className="px-3 py-2 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                                      >
+                                        <div className="flex items-center gap-1">
+                                          <span>{language === 'fr' ? 'Latitude' : 'Latitude'}</span>
+                                          {renderSubTableSortIndicator('lat')}
+                                        </div>
+                                      </th>
+                                      <th
+                                        onClick={() => handleSubTableSort('lon')}
+                                        className="px-3 py-2 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                                      >
+                                        <div className="flex items-center gap-1">
+                                          <span>{language === 'fr' ? 'Longitude' : 'Longitude'}</span>
+                                          {renderSubTableSortIndicator('lon')}
+                                        </div>
+                                      </th>
+                                      <th
+                                        onClick={() => handleSubTableSort('alt')}
+                                        className="px-3 py-2 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                                      >
+                                        <div className="flex items-center gap-1">
+                                          <span>{language === 'fr' ? 'Altitude' : 'Altitude'}</span>
+                                          {renderSubTableSortIndicator('alt')}
+                                        </div>
+                                      </th>
+                                      <th
+                                        onClick={() => handleSubTableSort('source')}
+                                        className="px-3 py-2 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                                      >
+                                        <div className="flex items-center gap-1">
+                                          <span>{language === 'fr' ? 'Fichier source' : 'Source File'}</span>
+                                          {renderSubTableSortIndicator('source')}
+                                        </div>
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-sans font-medium text-[11px]">
+                                    {(() => {
+                                      const indexedObs = ap.observations.map((obs, origIdx) => ({ obs, origIdx }));
+                                      const sorted = [...indexedObs].sort((a, b) => {
+                                        let valA: any;
+                                        let valB: any;
+                                        switch (subTableSortField) {
+                                          case 'index':
+                                            valA = a.origIdx;
+                                            valB = b.origIdx;
+                                            break;
+                                          case 'timestamp':
+                                            valA = parseTimestampToMs(a.obs.timestamp);
+                                            valB = parseTimestampToMs(b.obs.timestamp);
+                                            break;
+                                          case 'rssi':
+                                            valA = -a.obs.rssi;
+                                            valB = -b.obs.rssi;
+                                            break;
+                                          case 'ssid':
+                                            valA = (a.obs.ssid || ap.ssid || '').toLowerCase();
+                                            valB = (b.obs.ssid || ap.ssid || '').toLowerCase();
+                                            break;
+                                          case 'lat':
+                                            valA = a.obs.latitude || 0;
+                                            valB = b.obs.latitude || 0;
+                                            break;
+                                          case 'lon':
+                                            valA = a.obs.longitude || 0;
+                                            valB = b.obs.longitude || 0;
+                                            break;
+                                          case 'alt':
+                                            valA = a.obs.altitude || 0;
+                                            valB = b.obs.altitude || 0;
+                                            break;
+                                          case 'source':
+                                            valA = (a.obs.sourceFile || '').toLowerCase();
+                                            valB = (b.obs.sourceFile || '').toLowerCase();
+                                            break;
+                                          default:
+                                            valA = a.origIdx;
+                                            valB = b.origIdx;
+                                        }
+                                        if (valA < valB) return subTableSortOrder === 'asc' ? -1 : 1;
+                                        if (valA > valB) return subTableSortOrder === 'asc' ? 1 : -1;
+                                        return 0;
+                                      });
+
+                                      return sorted.map(({ obs, origIdx }) => {
+                                        const obsName = obs.ssid !== undefined && obs.ssid !== null ? obs.ssid : ap.ssid;
+                                        return (
+                                          <tr
+                                            key={`${ap.mac}-bt-obs-${origIdx}`}
+                                            className="hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                                          >
+                                            <td className="px-3 py-2 font-bold text-slate-400">
+                                              #{origIdx + 1}
+                                            </td>
+                                            <td className="px-3 py-2 text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                                              {formatToEuropeanDate(obs.timestamp)}
+                                            </td>
+                                            <td className="px-3 py-2 font-bold whitespace-nowrap">
+                                              {getRssiBadge(obs.rssi)}
+                                            </td>
+                                            <td className="px-3 py-2 min-w-[130px]">
+                                              <span className="font-semibold text-slate-900 dark:text-slate-100 truncate max-w-[170px]">
+                                                {obsName || <i className="text-slate-400 font-normal">&lt;{language === 'fr' ? 'Nom masqué' : 'Hidden Name'}&gt;</i>}
+                                              </span>
+                                            </td>
+                                            <td className="px-3 py-2 text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                                              {obs.latitude !== 0 ? obs.latitude.toFixed(6) : 'None'}
+                                            </td>
+                                            <td className="px-3 py-2 text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                                              {obs.longitude !== 0 ? obs.longitude.toFixed(6) : 'None'}
+                                            </td>
+                                            <td className="px-3 py-2 text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                                              {obs.altitude !== undefined
+                                                ? `${obs.altitude.toFixed(1)} m`
+                                                : '-'}
+                                            </td>
+                                            <td
+                                              className="px-3 py-2 text-slate-500 truncate max-w-[120px]"
+                                              title={obs.sourceFile || 'Import'}
+                                            >
+                                              {obs.sourceFile || 'Import'}
+                                            </td>
+                                          </tr>
+                                        );
+                                      });
+                                    })()}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                }
+
+                // WiFi Row Rendering
                 const hasWps =
                   ap.hasWps || (ap.authMode || '').toUpperCase().includes('WPS');
                 const showWpsBadge = filters.wpsFilter !== 'HIDE_BADGES';
                 // WiGLE clean simplified capability string
                 const cleanCaps = (ap.authMode || '').replace(/(\[\w+)\-.*?\]/g, '$1]');
-                const isModifiedAp = ap.isModified ?? (ap.hasSsidChanged !== undefined ? Boolean(ap.hasSsidChanged || ap.hasSecurityChanged) : (hasMultipleDetections ? Boolean(analyzeNetworkHistory(ap).hasSsidChanged || analyzeNetworkHistory(ap).hasSecurityChanged) : false));
-                const history = isModifiedAp ? analyzeNetworkHistory(ap) : null;
 
                 return (
                   <React.Fragment key={ap.mac}>
@@ -2113,7 +2834,9 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
             </strong>{' '}
             {language === 'fr' ? 'sur ' : 'of '}
             <strong className="text-slate-900 dark:text-white font-sans font-bold">{totalItems.toLocaleString()}</strong>{' '}
-            {language === 'fr' ? 'réseaux' : 'networks'}
+            {analysisMode === 'BT'
+              ? (language === 'fr' ? (totalItems > 1 ? 'périphériques' : 'périphérique') : (totalItems > 1 ? 'devices' : 'device'))
+              : (language === 'fr' ? (totalItems > 1 ? 'réseaux' : 'réseau') : (totalItems > 1 ? 'networks' : 'network'))}
           </span>
         </div>
 

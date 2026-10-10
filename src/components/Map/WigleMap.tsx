@@ -8,6 +8,16 @@ import {
   Compass,
   Radio,
   Wifi,
+  Bluetooth,
+  Headphones,
+  Smartphone,
+  Watch,
+  Keyboard,
+  Car,
+  Heart,
+  Bot,
+  Tv,
+  Laptop,
   Lock,
   Unlock,
   Filter,
@@ -29,6 +39,7 @@ import { analyzeNetworkHistory } from '../../utils/historyUtils';
 import { NetworkHistoryModal } from '../NetworkList/NetworkHistoryModal';
 import { getWigleSignalTier } from '../../utils/wigleSignalColors';
 import { formatToEuropeanDate } from '../../utils/statsUtils';
+import { getBluetoothCategoryInfo } from '../../utils/bluetoothUtils';
 
 export type DrawerSortOption =
   | 'SSID'
@@ -47,6 +58,7 @@ interface WigleMapProps {
   activeLocationFilter: { lat: number; lng: number; key: string; radiusMeters?: number; macs?: string[] } | null;
   onFilterByLocation: (location: { lat: number; lng: number; key: string; radiusMeters?: number; macs?: string[] } | null) => void;
   isWigleDevice?: boolean;
+  isBluetoothMode?: boolean;
   totalGpsPointsCount?: number;
   onResetFilters?: () => void;
   isOnlyModifiedFilterActive?: boolean;
@@ -271,12 +283,25 @@ export const WigleMap: React.FC<WigleMapProps> = ({
   activeLocationFilter,
   onFilterByLocation,
   isWigleDevice = false,
+  isBluetoothMode = false,
   totalGpsPointsCount = 0,
   onResetFilters,
   isOnlyModifiedFilterActive = false,
 }) => {
   const { theme } = useTheme();
   const { language } = useLanguage();
+
+  // Unified Bluetooth mode determination
+  const isBtMode = useMemo(() => {
+    if (isBluetoothMode || isWigleDevice) return true;
+    if (accessPoints && accessPoints.length > 0) {
+      return (
+        accessPoints.every((ap) => ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT') ||
+        accessPoints.some((ap) => ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT')
+      );
+    }
+    return false;
+  }, [isBluetoothMode, isWigleDevice, accessPoints]);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
@@ -1103,8 +1128,8 @@ export const WigleMap: React.FC<WigleMapProps> = ({
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#047857" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0;"><path d="M12 20h.01"/><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/></svg>
             <span>${language === 'fr' ? 'Position estimée par triangulation' : 'Estimated Position from Triangulation'}</span>
           </div>
-          <div style="font-weight:bold;font-size:13px;margin-bottom:2px;">${selectedAp.ssid || (language === 'fr' ? '<SSID Masqué>' : '<Hidden SSID>')}</div>
-          <div style="font-size:10px;color:#64748b;font-family:monospace;margin-bottom:6px;">${language === 'fr' ? 'BSSID\u00A0: ' : 'BSSID: '}${selectedAp.mac}</div>
+          <div style="font-weight:bold;font-size:13px;margin-bottom:2px;">${selectedAp.ssid || ((isWigleDevice || selectedAp.isBluetooth || selectedAp.type === 'BLE' || selectedAp.type === 'BT') ? (language === 'fr' ? '<Nom masqué>' : '<Hidden Name>') : (language === 'fr' ? '<SSID Masqué>' : '<Hidden SSID>'))}</div>
+          <div style="font-size:10px;color:#64748b;font-family:monospace;margin-bottom:6px;">${(isWigleDevice || selectedAp.isBluetooth || selectedAp.type === 'BLE' || selectedAp.type === 'BT') ? (language === 'fr' ? 'MAC\u00A0: ' : 'MAC: ') : (language === 'fr' ? 'BSSID\u00A0: ' : 'BSSID: ')}${selectedAp.mac}</div>
           <div style="background:#f1f5f9;padding:6px;border-radius:6px;font-size:11px;">
             <div><b>${language === 'fr' ? 'GPS\u00A0:' : 'GPS:'}</b> ${tri.estimatedLat.toFixed(5)}, ${tri.estimatedLng.toFixed(5)}</div>
             <div><b>${language === 'fr' ? 'Précision\u00A0:' : 'Accuracy:'}</b> ±\u00A0${tri.accuracyRadiusMeters.toFixed(1)}${language === 'fr' ? '\u00A0m' : ' m'}</div>
@@ -1219,7 +1244,7 @@ export const WigleMap: React.FC<WigleMapProps> = ({
         const matchVendor = ap.vendor.toLowerCase().includes(q);
         if (!matchSsid && !matchMac && !matchVendor) return false;
       }
-      if (drawerSecurityFilter !== 'ALL') {
+      if (!isBtMode && drawerSecurityFilter !== 'ALL') {
         if (drawerSecurityFilter === 'ENTERPRISE') {
           const secType = ap.security.type || '';
           const isEnterprise =
@@ -1237,7 +1262,7 @@ export const WigleMap: React.FC<WigleMapProps> = ({
       return true;
     });
     return sortNetworks(filtered);
-  }, [activeGroup, drawerSearch, drawerSecurityFilter, sortNetworks]);
+  }, [activeGroup, drawerSearch, drawerSecurityFilter, sortNetworks, isBtMode]);
 
   // Filtered networks inside active viewport drawer
   const filteredViewportNetworks = useMemo(() => {
@@ -1249,7 +1274,7 @@ export const WigleMap: React.FC<WigleMapProps> = ({
         const matchVendor = ap.vendor.toLowerCase().includes(q);
         if (!matchSsid && !matchMac && !matchVendor) return false;
       }
-      if (drawerSecurityFilter !== 'ALL') {
+      if (!isBtMode && drawerSecurityFilter !== 'ALL') {
         if (drawerSecurityFilter === 'ENTERPRISE') {
           const secType = ap.security.type || '';
           const isEnterprise =
@@ -1267,7 +1292,7 @@ export const WigleMap: React.FC<WigleMapProps> = ({
       return true;
     });
     return sortNetworks(filtered);
-  }, [visibleViewportAps, drawerSearch, drawerSecurityFilter, sortNetworks]);
+  }, [visibleViewportAps, drawerSearch, drawerSecurityFilter, sortNetworks, isBtMode]);
 
   // Helper badge for RSSI with WiGLE 7-tier colors and high readability font
   const renderRssiBadge = (rssi: number) => {
@@ -1284,8 +1309,60 @@ export const WigleMap: React.FC<WigleMapProps> = ({
     );
   };
 
+  // Helper for Bluetooth Category Icons
+  const renderCategoryIcon = (iconName: string) => {
+    const iconClass = 'w-3 h-3 shrink-0';
+    switch (iconName) {
+      case 'Headphones':
+      case 'Speaker':
+      case 'Music':
+        return <Headphones className={iconClass} />;
+      case 'Smartphone':
+      case 'Phone':
+        return <Smartphone className={iconClass} />;
+      case 'Watch':
+        return <Watch className={iconClass} />;
+      case 'Keyboard':
+        return <Keyboard className={iconClass} />;
+      case 'Car':
+        return <Car className={iconClass} />;
+      case 'Laptop':
+      case 'Monitor':
+      case 'Server':
+        return <Laptop className={iconClass} />;
+      case 'Heart':
+      case 'Activity':
+      case 'Thermometer':
+      case 'Scale':
+        return <Heart className={iconClass} />;
+      case 'Gamepad2':
+      case 'Toy':
+      case 'Bot':
+        return <Bot className={iconClass} />;
+      case 'Tv':
+      case 'Video':
+      case 'Camera':
+        return <Tv className={iconClass} />;
+      default:
+        return <Bluetooth className={iconClass} />;
+    }
+  };
+
   // Helper badge for security with matching padlocks, colors, and RAW tooltip
   const renderSecurityBadge = (ap: ProcessedAccessPoint) => {
+    if (isBtMode || ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT') {
+      const cat = getBluetoothCategoryInfo(ap.authMode, ap.frequency);
+      const label = language === 'fr' ? (ap.btCategoryFr || cat.nameFr) : (ap.btCategoryEn || cat.nameEn);
+      return (
+        <span
+          title={label}
+          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-bold border shadow-xs whitespace-nowrap cursor-default ${cat.color}`}
+        >
+          {renderCategoryIcon(cat.iconName || ap.btIconName || '')}
+          <span>{label}</span>
+        </span>
+      );
+    }
     const sec = ap.security;
     const rawTitle = (ap.authMode && ap.authMode.trim() !== '') ? ap.authMode : (sec.label ? `[${sec.label}]` : '[]');
     if (sec.type === 'OPEN' || !sec.isSecure) {
@@ -1508,10 +1585,16 @@ export const WigleMap: React.FC<WigleMapProps> = ({
               ? 'bg-cyan-600 border-cyan-500 text-white'
               : 'bg-white/95 dark:bg-slate-900/90 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:border-cyan-500'
           }`}
-          title={language === 'fr' ? 'Filtrer et lister les points d\'accès visibles dans la vue actuelle' : 'Filter and list all access points visible in current map view'}
+          title={isBtMode
+            ? (language === 'fr' ? 'Filtrer et lister les périphériques visibles dans la vue actuelle' : 'Filter and list all devices visible in current map view')
+            : (language === 'fr' ? 'Filtrer et lister les points d\'accès visibles dans la vue actuelle' : 'Filter and list all access points visible in current map view')}
         >
           <Search className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400" />
-          <span>{language === 'fr' ? 'Afficher les détails des réseaux de cette zone' : 'Show details about networks of this area'}</span>
+          <span>
+            {isBtMode
+              ? (language === 'fr' ? 'Afficher les détails pour les périphériques de cette zone' : 'Show details about devices of this area')
+              : (language === 'fr' ? 'Afficher les détails des réseaux de cette zone' : 'Show details about networks of this area')}
+          </span>
           {visibleViewportAps.length > 0 && (
             <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${drawerMode === 'VIEWPORT_FILTER' ? 'bg-white/20 text-white' : 'bg-cyan-100 dark:bg-cyan-950 text-cyan-800 dark:text-cyan-300'}`}>
               {visibleViewportAps.length}
@@ -1561,9 +1644,13 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                     <div>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <h3 className="font-bold text-xs text-slate-900 dark:text-white">
-                          {language === 'fr'
-                            ? `Groupe de réseaux\u00A0: ${activeGroup?.count || 0} ${(activeGroup?.count || 0) > 1 ? "points d'accès" : "point d'accès"}`
-                            : `Network Group: ${activeGroup?.count || 0} ${(activeGroup?.count || 0) > 1 ? 'networks' : 'network'}`}
+                          {(isBtMode || (activeGroup ? activeGroup.networks.some((n) => n.isBluetooth || n.type === 'BLE' || n.type === 'BT') : false))
+                            ? (language === 'fr'
+                                ? `Groupe de périphériques\u00A0: ${activeGroup?.count || 0} ${(activeGroup?.count || 0) > 1 ? 'périphériques' : 'périphérique'}`
+                                : `Devices Group: ${activeGroup?.count || 0} ${(activeGroup?.count || 0) > 1 ? 'devices' : 'device'}`)
+                            : (language === 'fr'
+                                ? `Groupe de réseaux\u00A0: ${activeGroup?.count || 0} ${(activeGroup?.count || 0) > 1 ? "points d'accès" : "point d'accès"}`
+                                : `Network Group: ${activeGroup?.count || 0} ${(activeGroup?.count || 0) > 1 ? 'networks' : 'network'}`)}
                         </h3>
                       </div>
                       <p className="text-[10px] text-slate-500 dark:text-slate-400 font-sans font-medium">
@@ -1576,10 +1663,15 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                     <Search className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
                     <div>
                       <h3 className="font-bold text-xs text-slate-900 dark:text-white">
-                        {language === 'fr' ? 'Détails des réseaux visibles sur la carte' : 'Details of network visible on the map'}
+                        {isBtMode
+                          ? (language === 'fr' ? 'Détails des périphériques visibles sur la carte' : 'Details of devices visible on the map')
+                          : (language === 'fr' ? 'Détails des réseaux visibles sur la carte' : 'Details of network visible on the map')}
                       </h3>
                       <p className="text-[10px] text-slate-500 dark:text-slate-400 font-sans font-medium">
-                        {visibleViewportAps.length} {language === 'fr' ? 'réseaux dans la zone définie' : 'networks in the defined area'}
+                        {visibleViewportAps.length}{' '}
+                        {isBtMode
+                          ? (language === 'fr' ? 'périphériques dans la zone définie' : 'devices in the defined area')
+                          : (language === 'fr' ? 'réseaux dans la zone définie' : 'networks in the defined area')}
                       </p>
                     </div>
                   </>
@@ -1650,46 +1742,41 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                 <option value="VENDOR">{language === 'fr' ? 'Fabricant' : 'Manufacturer'}</option>
                 <option value="SECURITY">{language === 'fr' ? 'Sécurité / Chiffrement' : 'Security'}</option>
                 <option value="SIGNAL">{language === 'fr' ? 'Signal' : 'Signal'}</option>
-                {!isWigleDevice && <option value="CHANNEL">{language === 'fr' ? 'Canal' : 'Channel'}</option>}
+                {!isBtMode && <option value="CHANNEL">{language === 'fr' ? 'Canal' : 'Channel'}</option>}
                 <option value="FIRST_SEEN">{language === 'fr' ? '1ère Détection' : 'First Seen'}</option>
               </select>
             </div>
 
-            {/* Filter Pills inside Drawer */}
-            <div className="overflow-x-auto custom-scrollbar pt-2 pb-2.5 mt-1">
-              <div className="flex items-center gap-1 min-w-max text-[10px] px-0.5">
-                {[
-                  { id: 'ALL', label: language === 'fr' ? 'Tous' : 'All' },
-                  { id: 'OPEN', label: language === 'fr' ? 'Ouvert' : 'Open' },
-                  { id: 'WEP', label: 'WEP' },
-                  { id: 'WPA', label: 'WPA1' },
-                  { id: 'WPA_WPA2', label: 'WPA1/2' },
-                  { id: 'WPA2', label: 'WPA2' },
-                  { id: 'WPA2_WPA3', label: 'WPA2/3' },
-                  { id: 'WPA3', label: 'WPA3' },
-                  { id: 'ENTERPRISE', label: language === 'fr' ? 'Entreprise' : 'Enterprise' },
-                ]
-                  .filter((item) => {
-                    if (isWigleDevice) {
-                      return !['WPA_WPA2', 'WPA2_WPA3', 'ENTERPRISE'].includes(item.id);
-                    }
-                    return true;
-                  })
-                  .map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => setDrawerSecurityFilter(item.id)}
-                    className={`px-2 py-1 rounded-md font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                      drawerSecurityFilter === item.id
-                        ? 'bg-cyan-600 text-white shadow-xs'
-                        : 'bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+            {/* Filter Pills inside Drawer (WiFi only) */}
+            {!isBtMode && (
+              <div className="overflow-x-auto custom-scrollbar pt-2 pb-2.5 mt-1">
+                <div className="flex items-center gap-1 min-w-max text-[10px] px-0.5">
+                  {[
+                    { id: 'ALL', label: language === 'fr' ? 'Tous' : 'All' },
+                    { id: 'OPEN', label: language === 'fr' ? 'Ouvert' : 'Open' },
+                    { id: 'WEP', label: 'WEP' },
+                    { id: 'WPA', label: 'WPA1' },
+                    { id: 'WPA_WPA2', label: 'WPA1/2' },
+                    { id: 'WPA2', label: 'WPA2' },
+                    { id: 'WPA2_WPA3', label: 'WPA2/3' },
+                    { id: 'WPA3', label: 'WPA3' },
+                    { id: 'ENTERPRISE', label: language === 'fr' ? 'Entreprise' : 'Enterprise' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => setDrawerSecurityFilter(item.id)}
+                      className={`px-2 py-1 rounded-md font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                        drawerSecurityFilter === item.id
+                          ? 'bg-cyan-600 text-white shadow-xs'
+                          : 'bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Grouped APs Scrollable List */}
@@ -1750,9 +1837,19 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                     {/* SSID & Signal */}
                     <div className="flex items-center justify-between gap-1">
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <Radio className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                        {isBtMode || ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT' ? (
+                          <Bluetooth className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                        ) : (
+                          <Radio className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                        )}
                         <span className="font-bold text-xs text-slate-900 dark:text-white truncate">
-                          {ap.ssid || <i className="text-slate-400 font-normal">&lt;{language === 'fr' ? 'SSID Masqué' : 'Hidden SSID'}&gt;</i>}
+                          {ap.ssid || (
+                            <i className="text-slate-400 font-normal">
+                              &lt;{(isBtMode || ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT')
+                                ? (language === 'fr' ? 'Nom masqué' : 'Hidden Name')
+                                : (language === 'fr' ? 'SSID Masqué' : 'Hidden SSID')}&gt;
+                            </i>
+                          )}
                         </span>
                         {history.hasSsidChanged && (
                           <button
@@ -1764,8 +1861,8 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                             }}
                             title={
                               language === 'fr'
-                                ? `Changement de SSID détecté (${history.ssidTimeline.length} noms constatés) ! Cliquez pour voir l'historique`
-                                : `SSID change detected (${history.ssidTimeline.length} names recorded)! Click to view history`
+                                ? `Changement de SSID détecté (${history.ssidTimeline.length} noms constatés) ! Cliquez pour voir l'historique.`
+                                : `SSID change detected (${history.ssidTimeline.length} names recorded)! Click to view history.`
                             }
                             className="p-1 rounded bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/80 dark:hover:bg-amber-900 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700/80 transition-all cursor-pointer shrink-0 shadow-2xs"
                           >
@@ -1791,7 +1888,11 @@ export const WigleMap: React.FC<WigleMapProps> = ({
 
                       {/* Right: Channel, Band, GPS */}
                       <div className="flex flex-col items-end shrink-0 justify-center">
-                        {!isWigleDevice && (
+                        {!isBtMode && (ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT') ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                            Bluetooth
+                          </span>
+                        ) : !isBtMode && (
                           ap.isWigleOnly || !ap.channel || ap.channel === '0' || ap.channel === '' ? (
                             <span className="text-slate-400 dark:text-slate-500 font-sans font-medium text-xs">—</span>
                           ) : (
@@ -1831,8 +1932,8 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                             }}
                             title={
                               language === 'fr'
-                                ? `Changement de chiffrement détecté (${history.securityTimeline.length} modes) ! Cliquez pour voir l'historique`
-                                : `Security change detected (${history.securityTimeline.length} modes)! Click to view history`
+                                ? `Évolution de chiffrement détecté (${history.securityTimeline.length} modes) ! Cliquez pour voir l'historique.`
+                                : `Security change detected (${history.securityTimeline.length} modes)! Click to view history.`
                             }
                             className="p-1 rounded bg-purple-100 hover:bg-purple-200 dark:bg-purple-950/80 dark:hover:bg-purple-900 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700/80 transition-all cursor-pointer shrink-0 shadow-2xs"
                           >
@@ -1840,6 +1941,7 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                           </button>
                         )}
                         {(() => {
+                          if (ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT') return null;
                           const rawMode = (ap.authMode || '').toUpperCase();
                           const isOweTrans =
                             rawMode.includes('OWE-TRANS') ||
@@ -1876,7 +1978,7 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                             return null; // Never display [ESS] as a cipher
                           }
 
-                          if (!isWigleDevice && ap.security.cipherLabel) {
+                          if (!isBtMode && !isWigleDevice && ap.security.cipherLabel) {
                             if (ap.isWigleOnly && !ap.hasCompleteDetails) {
                               return null;
                             }
@@ -1892,7 +1994,7 @@ export const WigleMap: React.FC<WigleMapProps> = ({
 
                           return null;
                         })()}
-                        {hasWps && (!ap.isWigleOnly || ap.hasCompleteDetails) && (
+                        {!isBtMode && !(ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT') && hasWps && (!ap.isWigleOnly || ap.hasCompleteDetails) && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60">
                             WPS
                           </span>
@@ -1950,7 +2052,9 @@ export const WigleMap: React.FC<WigleMapProps> = ({
         <div className="flex items-center justify-between gap-4 font-semibold text-slate-800 dark:text-slate-200 pb-1.5 mb-1.5 border-b border-slate-200 dark:border-slate-800">
           <span className="flex items-center gap-1.5">
             <MapPin className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
-            {language === 'fr' ? 'Réseaux par emplacement' : 'Networks per Location'}
+            {isBtMode
+              ? (language === 'fr' ? 'Appareils par emplacement' : 'Devices per Location')
+              : (language === 'fr' ? 'Réseaux par emplacement' : 'Networks per Location')}
           </span>
           <span className="text-[10px] text-slate-500 dark:text-slate-400 font-sans font-medium">
             {locationGroups.length} {language === 'fr' ? 'emplacements' : 'locations'}
@@ -1960,31 +2064,59 @@ export const WigleMap: React.FC<WigleMapProps> = ({
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px]">
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-[#0284c7] shadow-sm shrink-0"></span>
-            <span className="text-slate-700 dark:text-slate-300">{language === 'fr' ? '1 Réseau' : '1 Network'}</span>
+            <span className="text-slate-700 dark:text-slate-300">
+              {isBtMode
+                ? (language === 'fr' ? '1 Appareil' : '1 Device')
+                : (language === 'fr' ? '1 Réseau' : '1 Network')}
+            </span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-[#10b981] shadow-sm shrink-0"></span>
-            <span className="text-slate-700 dark:text-slate-300">{language === 'fr' ? '2 - 4 Réseaux' : '2 - 4 Networks'}</span>
+            <span className="text-slate-700 dark:text-slate-300">
+              {isBtMode
+                ? (language === 'fr' ? '2 - 4 Appareils' : '2 - 4 Devices')
+                : (language === 'fr' ? '2 - 4 Réseaux' : '2 - 4 Networks')}
+            </span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-[#eab308] shadow-sm shrink-0"></span>
-            <span className="text-slate-700 dark:text-slate-300">{language === 'fr' ? '5 - 9 Réseaux' : '5 - 9 Networks'}</span>
+            <span className="text-slate-700 dark:text-slate-300">
+              {isBtMode
+                ? (language === 'fr' ? '5 - 9 Appareils' : '5 - 9 Devices')
+                : (language === 'fr' ? '5 - 9 Réseaux' : '5 - 9 Networks')}
+            </span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-[#f97316] shadow-sm shrink-0"></span>
-            <span className="text-slate-700 dark:text-slate-300">{language === 'fr' ? '10 - 24 Réseaux' : '10 - 24 Networks'}</span>
+            <span className="text-slate-700 dark:text-slate-300">
+              {isBtMode
+                ? (language === 'fr' ? '10 - 24 Appareils' : '10 - 24 Devices')
+                : (language === 'fr' ? '10 - 24 Réseaux' : '10 - 24 Networks')}
+            </span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-[#ef4444] shadow-sm shrink-0"></span>
-            <span className="text-slate-700 dark:text-slate-300">{language === 'fr' ? '25 - 49 Réseaux' : '25 - 49 Networks'}</span>
+            <span className="text-slate-700 dark:text-slate-300">
+              {isBtMode
+                ? (language === 'fr' ? '25 - 49 Appareils' : '25 - 49 Devices')
+                : (language === 'fr' ? '25 - 49 Réseaux' : '25 - 49 Networks')}
+            </span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-[#9333ea] shadow-sm shrink-0"></span>
-            <span className="text-slate-700 dark:text-slate-300">{language === 'fr' ? '50 - 99 Réseaux' : '50 - 99 Networks'}</span>
+            <span className="text-slate-700 dark:text-slate-300">
+              {isBtMode
+                ? (language === 'fr' ? '50 - 99 Appareils' : '50 - 99 Devices')
+                : (language === 'fr' ? '50 - 99 Réseaux' : '50 - 99 Networks')}
+            </span>
           </div>
           <div className="flex items-center gap-1.5 col-span-2 pt-0.5 border-t border-slate-100 dark:border-slate-800">
             <span className="w-2.5 h-2.5 rounded-full bg-[#1e1b4b] shadow-sm shrink-0 border border-slate-300 dark:border-slate-600"></span>
-            <span className="text-slate-700 dark:text-slate-300 font-semibold">{language === 'fr' ? '+ de 100 Réseaux' : '100+ Networks'}</span>
+            <span className="text-slate-700 dark:text-slate-300 font-semibold">
+              {isBtMode
+                ? (language === 'fr' ? '+ de 100 Appareils' : '100+ Devices')
+                : (language === 'fr' ? '+ de 100 Réseaux' : '100+ Networks')}
+            </span>
           </div>
         </div>
       </div>
@@ -2047,7 +2179,7 @@ export const WigleMap: React.FC<WigleMapProps> = ({
           onClose={() => setHistoryModalAp(null)}
           ap={historyModalAp}
           initialType={historyModalType}
-          isWigleDevice={isWigleDevice}
+          isWigleDevice={isWigleDevice || isBtMode}
         />
       )}
     </div>

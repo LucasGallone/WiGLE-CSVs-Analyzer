@@ -12,10 +12,17 @@ import {
   compactObs,
   synchronizeLatestApObservations,
 } from '../utils/csvParser';
-import { ProcessedAccessPoint, AccessPointObservation, WigleCsvHeader, WifiBand } from '../types/wigle';
+import { resolveBtCategory, resolveBtCompany, getBtAddressType } from '../utils/bluetoothUtils';
+import { ProcessedAccessPoint, AccessPointObservation, WigleCsvHeader, WifiBand, AnalysisMode } from '../types/wigle';
 
 self.onmessage = async (e: MessageEvent) => {
-  const { file, csvText, fileName, customOuiMap } = e.data;
+  const { file, csvText, fileName, customOuiMap, analysisMode = 'WIFI' } = e.data as {
+    file?: File;
+    csvText?: string;
+    fileName: string;
+    customOuiMap: Record<string, string>;
+    analysisMode?: AnalysisMode;
+  };
 
   try {
     let header: WigleCsvHeader = { rawLine: '' };
@@ -120,15 +127,64 @@ self.onmessage = async (e: MessageEvent) => {
           const rawMac = cols[colMap.MAC ?? 0] || '';
           if (!rawMac || rawMac.length < 5 || rawMac.startsWith('#')) continue;
 
+          // Detect Type across all columns (handles unnamed columns to the right, e.g. BLE in extra column)
+          let detectedType: 'WIFI' | 'BLE' | 'BT' | 'OTHER' = 'OTHER';
+
+          for (let cIdx = cols.length - 1; cIdx >= 0; cIdx--) {
+            const val = (cols[cIdx] || '').replace(/["']/g, '').trim().toUpperCase();
+            if (val === 'WIFI') {
+              detectedType = 'WIFI';
+              break;
+            } else if (val === 'BLE' || val === 'BTLE') {
+              detectedType = 'BLE';
+              break;
+            } else if (val === 'BT' || val === 'BLUETOOTH') {
+              detectedType = 'BT';
+              break;
+            }
+          }
+
+          if (detectedType === 'OTHER' && colMap.TYPE !== undefined && cols[colMap.TYPE] !== undefined) {
+            const val = (cols[colMap.TYPE] || '').replace(/["']/g, '').trim().toUpperCase();
+            if (val === 'WIFI') detectedType = 'WIFI';
+            else if (val === 'BLE' || val === 'BTLE') detectedType = 'BLE';
+            else if (val === 'BT' || val === 'BLUETOOTH') detectedType = 'BT';
+          }
+
+          const authMode = cols[colMap.AUTHMODE ?? 2] || '';
+          const freqRaw = cols[colMap.FREQUENCY ?? 5];
+          const freqNum = freqRaw ? parseInt(freqRaw, 10) : undefined;
+
+          // Fallback detection for Bluetooth if type column is absent or ambiguous
+          if (detectedType === 'OTHER') {
+            const authUpper = authMode.toUpperCase();
+            if (
+              authUpper.includes('MISC') ||
+              authUpper.includes('UNCATEGORIZED') ||
+              authUpper.includes('KEYBOARD') ||
+              authUpper.includes('HEADPHONE') ||
+              authUpper.includes('CAR AUDIO') ||
+              freqNum === 7936 ||
+              freqNum === 1344 ||
+              freqNum === 1028 ||
+              freqNum === 524
+            ) {
+              detectedType = 'BLE';
+            } else if (authUpper.includes('WPA') || authUpper.includes('WEP') || authUpper.includes('ESS') || authUpper.includes('RSN')) {
+              detectedType = 'WIFI';
+            }
+          }
+
+          const isBluetooth = detectedType === 'BLE' || detectedType === 'BT';
+          const type = isBluetooth ? (detectedType === 'BT' ? 'BT' : 'BLE') : 'WIFI';
+
           const mac = normalizeMac(rawMac);
           const ssid = (cols[colMap.SSID ?? 1] || '').trim();
-          const authMode = cols[colMap.AUTHMODE ?? 2] || '';
           const firstSeen = cols[colMap.FIRSTSEEN ?? 3] || '';
           const channelRaw = (cols[colMap.CHANNEL ?? 4] || '').trim();
           const hasValidChannel = channelRaw !== '' && channelRaw !== '0';
           const channel = hasValidChannel ? channelRaw : (isWigleFile ? '' : '1');
-          const freqRaw = cols[colMap.FREQUENCY ?? 5];
-          const frequency = freqRaw && parseInt(freqRaw, 10) > 0 ? parseInt(freqRaw, 10) : (hasValidChannel ? channelToFrequency(channel) : undefined);
+          const frequency = freqNum && freqNum > 0 ? freqNum : (hasValidChannel ? channelToFrequency(channel) : undefined);
           const rssiRaw = cols[colMap.RSSI ?? 6] || '-80';
           const rssi = parseFloat(rssiRaw) || -80;
           const latRaw = cols[colMap.CURRENTLATITUDE ?? 7] || '0';
@@ -139,29 +195,6 @@ self.onmessage = async (e: MessageEvent) => {
           const altitudeMeters = altRaw ? parseFloat(altRaw) : undefined;
           const accRaw = cols[colMap.ACCURACYMETERS ?? 10];
           const accuracyMeters = accRaw ? parseFloat(accRaw) : undefined;
-
-          let typeColIndex = colMap.TYPE;
-          if (typeColIndex === undefined) {
-            for (let cIdx = cols.length - 1; cIdx >= 0; cIdx--) {
-              const val = (cols[cIdx] || '').replace(/["']/g, '').trim().toUpperCase();
-              if (['WIFI', 'BLE', 'BT', 'GSM', 'LTE', 'WCDMA', 'CDMA', 'NR'].includes(val)) {
-                typeColIndex = cIdx;
-                break;
-              }
-            }
-          }
-
-          const rawType = (typeColIndex !== undefined && cols[typeColIndex] !== undefined ? cols[typeColIndex] : '')
-            .replace(/["']/g, '')
-            .trim()
-            .toUpperCase();
-
-          // Strictly filter out rows without WIFI as Type (empty Type is also ignored)
-          if (rawType !== 'WIFI') {
-            continue;
-          }
-
-          const type = 'WIFI';
 
           const rcois = cols[colMap.RCOIS ?? 12] || '';
           const mfgId = cols[colMap.MFGID ?? 13] || '';
@@ -192,6 +225,15 @@ self.onmessage = async (e: MessageEvent) => {
             const security = classifySecurity(authMode);
             const hasWps = (authMode || '').toUpperCase().includes('WPS');
 
+            let btCat;
+            let btAddr;
+            let btCompany = '';
+            if (isBluetooth) {
+              btCat = resolveBtCategory(authMode, frequency);
+              btAddr = getBtAddressType(mac);
+              btCompany = resolveBtCompany(mfgId);
+            }
+
             const ap: ProcessedAccessPoint = {
               mac,
               oui: internString(oui),
@@ -200,7 +242,15 @@ self.onmessage = async (e: MessageEvent) => {
               isSSIDHidden: !ssid || ssid.length === 0,
               hasWps,
               authMode: internString(authMode),
-              security,
+              security: isBluetooth ? {
+                type: 'UNKNOWN',
+                label: btCat?.nameEn || 'Bluetooth',
+                color: btCat?.color || '#3b82f6',
+                isSecure: false,
+                ciphers: [],
+                protocols: [type],
+                details: btCat?.nameEn || 'Bluetooth',
+              } : security,
               channel: internString(channel),
               frequency,
               band: internString(band) as WifiBand,
@@ -220,6 +270,18 @@ self.onmessage = async (e: MessageEvent) => {
               sourceFiles: [internString(fileName)],
               isWigleOnly: isWigleFile,
               hasCompleteDetails: !isWigleFile && hasValidChannel,
+              // Bluetooth fields
+              btCategory: btCat ? internString(btCat.nameEn) : undefined,
+              btCategoryFr: btCat ? internString(btCat.nameFr) : undefined,
+              btCategoryEn: btCat ? internString(btCat.nameEn) : undefined,
+              btCategoryGroup: btCat ? internString(btCat.group) : undefined,
+              btCompany: btCompany ? internString(btCompany) : undefined,
+              btAddressType: btAddr ? internString(btAddr.type) : undefined,
+              btAddressTypeFr: btAddr ? internString(btAddr.labelFr) : undefined,
+              btAddressTypeEn: btAddr ? internString(btAddr.labelEn) : undefined,
+              btProtocol: isBluetooth ? (type as 'BLE' | 'BT') : undefined,
+              btColor: btCat?.color,
+              btIconName: btCat?.iconName,
             };
 
             ap.observations.push(compactObs(ap, observation));

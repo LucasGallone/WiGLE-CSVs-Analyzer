@@ -6,6 +6,7 @@ import { formatToEuropeanDate } from '../../utils/statsUtils';
 import {
   X,
   Radio,
+  Bluetooth,
   MapPin,
   Lock,
   Unlock,
@@ -28,6 +29,17 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  Tag,
+  HelpCircle,
+  Headphones,
+  Smartphone,
+  Watch,
+  Keyboard,
+  Car,
+  Heart,
+  Bot,
+  Tv,
+  Laptop,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 
@@ -41,6 +53,44 @@ interface NetworkDetailModalProps {
 export const NetworkDetailModal: React.FC<NetworkDetailModalProps> = ({ ap, onClose, onFocusMap, isWigleDevice = false }) => {
   const { t, language } = useLanguage();
   const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const renderCategoryIcon = (iconName: string) => {
+    const iconClass = 'w-4 h-4 shrink-0';
+    switch (iconName) {
+      case 'Headphones':
+      case 'Speaker':
+      case 'Music':
+        return <Headphones className={iconClass} />;
+      case 'Smartphone':
+      case 'Phone':
+        return <Smartphone className={iconClass} />;
+      case 'Watch':
+        return <Watch className={iconClass} />;
+      case 'Keyboard':
+        return <Keyboard className={iconClass} />;
+      case 'Car':
+        return <Car className={iconClass} />;
+      case 'Laptop':
+      case 'Monitor':
+      case 'Server':
+        return <Laptop className={iconClass} />;
+      case 'Heart':
+      case 'Activity':
+      case 'Thermometer':
+      case 'Scale':
+        return <Heart className={iconClass} />;
+      case 'Gamepad2':
+      case 'Toy':
+      case 'Bot':
+        return <Bot className={iconClass} />;
+      case 'Tv':
+      case 'Video':
+      case 'Camera':
+        return <Tv className={iconClass} />;
+      default:
+        return <Bluetooth className={iconClass} />;
+    }
+  };
   const [detailSortField, setDetailSortField] = useState<string>('timestamp');
   const [detailSortOrder, setDetailSortOrder] = useState<'asc' | 'desc'>('desc');
 
@@ -197,8 +247,11 @@ export const NetworkDetailModal: React.FC<NetworkDetailModalProps> = ({ ap, onCl
     return calculateTriangulation(ap);
   }, [ap]);
 
+  const isBtDevice = ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined || ap.btCategory !== undefined;
+
   // Fully dynamic technical analysis based on raw capabilities
   const dynamicAnalysis = useMemo(() => {
+    if (isBtDevice) return { pointsEn: [], pointsFr: [] };
     return generateTechnicalAnalysis(
       ap.authMode,
       sec.type,
@@ -206,7 +259,7 @@ export const NetworkDetailModal: React.FC<NetworkDetailModalProps> = ({ ap, onCl
       sec.keyManagement || [],
       sec.ciphers || []
     );
-  }, [ap.authMode, sec]);
+  }, [ap.authMode, sec, isBtDevice]);
 
   const renderFormattedText = (text: string) => {
     const normalized = text.replace(/<\/?b>/gi, '**').replace(/<\/?strong>/gi, '**');
@@ -257,15 +310,34 @@ export const NetworkDetailModal: React.FC<NetworkDetailModalProps> = ({ ap, onCl
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-cyan-100 dark:bg-cyan-950 border border-cyan-300 dark:border-cyan-700/50 text-cyan-600 dark:text-cyan-400">
-              <Radio className="w-5 h-5" />
+            <div className={`p-2.5 rounded-xl border ${
+              isBtDevice
+                ? 'bg-indigo-100 dark:bg-indigo-950 border-indigo-300 dark:border-indigo-700/50 text-indigo-600 dark:text-indigo-400'
+                : 'bg-cyan-100 dark:bg-cyan-950 border-cyan-300 dark:border-cyan-700/50 text-cyan-600 dark:text-cyan-400'
+            }`}>
+              {isBtDevice ? <Bluetooth className="w-5 h-5" /> : <Radio className="w-5 h-5" />}
             </div>
             <div>
               <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                {ap.ssid || <span className="text-slate-400 italic">&lt;Hidden SSID&gt;</span>}
+                {ap.ssid ? (
+                  ap.ssid
+                ) : isBtDevice ? (
+                  <span className="text-slate-400 italic">
+                    &lt;{language === 'fr' ? 'Nom masqué' : 'Hidden Name'}&gt;
+                  </span>
+                ) : (
+                  <span className="text-slate-400 italic">
+                    &lt;{language === 'fr' ? 'SSID Masqué' : 'Hidden SSID'}&gt;
+                  </span>
+                )}
               </h2>
               <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-sans font-medium mt-0.5">
-                <span>{language === 'fr' ? 'BSSID\u00A0: ' : 'BSSID: '}{ap.mac}</span>
+                <span>
+                  {isBtDevice
+                    ? (language === 'fr' ? 'MAC\u00A0: ' : 'MAC: ')
+                    : (language === 'fr' ? 'BSSID\u00A0: ' : 'BSSID: ')}
+                  {ap.mac}
+                </span>
               </div>
             </div>
           </div>
@@ -282,7 +354,7 @@ export const NetworkDetailModal: React.FC<NetworkDetailModalProps> = ({ ap, onCl
         <div className="p-6 space-y-5 overflow-y-auto custom-scrollbar">
           {/* Main Specs Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Vendor Card */}
+            {/* Vendor / Manufacturer Card */}
             <div className="bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 p-4 rounded-xl space-y-2">
               <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-semibold">
                 <span className="flex items-center gap-1.5">
@@ -290,180 +362,209 @@ export const NetworkDetailModal: React.FC<NetworkDetailModalProps> = ({ ap, onCl
                   {t('modal.hardwareVendor')}
                 </span>
                 <button
-                  onClick={() => copyToClipboard(ap.vendor, 'vendor')}
+                  onClick={() => copyToClipboard(ap.btCompany || ap.vendor, 'vendor')}
                   className="text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
                   title={language === 'fr' ? 'Copier le nom du fabricant' : 'Copy manufacturer name'}
                 >
                   {copiedField === 'vendor' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
-              <div className="text-base font-bold text-slate-900 dark:text-white">{ap.vendor}</div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">
-                {language === 'fr' ? 'Préfixe OUI\u00A0:' : 'OUI Prefix:'}{' '}
-                <span className="text-indigo-600 dark:text-indigo-300 font-bold">{ap.oui}</span>
+              <div className="text-base font-bold text-slate-900 dark:text-white">
+                {ap.btCompany || ap.vendor}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-sans flex items-center gap-2 flex-wrap">
+                <span>
+                  {language === 'fr' ? 'Préfixe OUI\u00A0:' : 'OUI Prefix:'}{' '}
+                  <span className="text-indigo-600 dark:text-indigo-300 font-bold">{ap.oui}</span>
+                </span>
               </div>
             </div>
 
-            {/* Security & Encryption Card */}
-            <div className="bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 p-4 rounded-xl space-y-2">
-              <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-semibold">
-                <span className="flex items-center gap-1.5">
-                  {sec.isSecure ? (
-                    <Lock className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
-                  ) : (
-                    <Unlock className="w-3.5 h-3.5 text-rose-500" />
+            {/* Bluetooth Category Card OR WiFi Security Card */}
+            {isBtDevice ? (
+              <div className="bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 p-4 rounded-xl space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-semibold">
+                  <span className="flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                    {language === 'fr' ? 'Catégorie' : 'Category'}
+                  </span>
+                </div>
+                <div className="text-sm font-semibold text-slate-900 dark:text-white flex items-center">
+                  <span className="flex items-center gap-2">
+                    <span className="p-1 rounded-md bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400">
+                      {renderCategoryIcon(ap.btIconName || '')}
+                    </span>
+                    <span>
+                      {(language === 'fr' ? ap.btCategoryFr : ap.btCategoryEn) ||
+                        ap.btCategory ||
+                        (language === 'fr' ? 'Non catégorisé' : 'Uncategorized')}
+                    </span>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 p-4 rounded-xl space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-semibold">
+                  <span className="flex items-center gap-1.5">
+                    {sec.isSecure ? (
+                      <Lock className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                    ) : (
+                      <Unlock className="w-3.5 h-3.5 text-rose-500" />
+                    )}
+                    {t('modal.securityEncryption')}
+                  </span>
+                </div>
+                <div className="text-sm font-semibold text-slate-900 dark:text-white flex items-center justify-between">
+                  <span>{sec.label}</span>
+                  {!isWigleDevice && (!ap.isWigleOnly || ap.hasCompleteDetails) && sec.type !== 'OPEN' && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-cyan-100 dark:bg-cyan-950 text-cyan-800 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800">
+                      {fullCipherSpec}
+                    </span>
                   )}
-                  {t('modal.securityEncryption')}
+                </div>
+                {sec.keyManagement && sec.keyManagement.length > 0 && sec.type !== 'OPEN' && (
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">
+                    {t('modal.keyMgmt')}{language === 'fr' ? '\u00A0: ' : ': '}<span className="font-semibold text-slate-800 dark:text-slate-200">{sec.keyManagement.join(' + ')}</span>
+                  </div>
+                )}
+                <div className="flex items-start justify-between gap-2 p-2 rounded-lg bg-white/70 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 text-[11px] font-sans">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-slate-400 font-semibold mr-1.5">{language === 'fr' ? 'Brut\u00A0:' : 'Raw:'}</span>
+                    <span className="text-slate-800 dark:text-slate-200 font-sans text-xs break-all select-all font-semibold">
+                      {ap.authMode || '[]'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => copyToClipboard(ap.authMode, 'authMode')}
+                    className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+                    title={language === 'fr' ? 'Copier les capacités brutes (capabilities)' : 'Copy raw capability string'}
+                  >
+                    {copiedField === 'authMode' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Technical Analysis Callout (WiFi Only) */}
+          {!isBtDevice && (
+            <div className="bg-gradient-to-r from-cyan-500/10 via-indigo-500/10 to-blue-500/10 dark:from-cyan-950/40 dark:via-indigo-950/30 dark:to-blue-950/40 border border-cyan-300/70 dark:border-cyan-700/60 p-4 rounded-xl space-y-3">
+              <div className="flex items-center justify-between text-xs font-bold text-cyan-800 dark:text-cyan-300">
+                <span className="flex items-center gap-1.5">
+                  <Binary className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                  {t('modal.technicalAnalysis')}
                 </span>
               </div>
-              <div className="text-sm font-semibold text-slate-900 dark:text-white flex items-center justify-between">
-                <span>{sec.label}</span>
-                {!isWigleDevice && (!ap.isWigleOnly || ap.hasCompleteDetails) && sec.type !== 'OPEN' && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-cyan-100 dark:bg-cyan-950 text-cyan-800 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800">
-                    {fullCipherSpec}
-                  </span>
+
+              {/* Individual Spaced Bullet Point Cards */}
+              <div className="space-y-2">
+                {analysisPoints.length > 0 ? (
+                  analysisPoints.map((pt, idx) => {
+                    const cleanText = pt.startsWith('• ') ? pt.substring(2) : pt;
+                    const isEval = cleanText.toLowerCase().includes('evaluation') || cleanText.toLowerCase().includes('évaluation') || cleanText.toLowerCase().includes('assessment');
+                    const isPmf = cleanText.toLowerCase().includes('frame protection') || cleanText.toLowerCase().includes('protection des trames');
+                    const isKey = cleanText.toLowerCase().includes('key management') || cleanText.toLowerCase().includes('gestion des clés');
+                    const isCipher = cleanText.toLowerCase().includes('symmetric cipher') || cleanText.toLowerCase().includes('chiffrement symétrique') || cleanText.toLowerCase().includes('encryption');
+                    const isRoam = cleanText.toLowerCase().includes('roaming') || cleanText.toLowerCase().includes('mobilité') || cleanText.toLowerCase().includes('itinérance') || cleanText.toLowerCase().includes('initial link');
+                    const isWps = cleanText.toLowerCase().includes('wps') || cleanText.toLowerCase().includes('wi-fi protected setup');
+                    const isProv = cleanText.toLowerCase().includes('provisioning') || cleanText.toLowerCase().includes('provisionnement') || cleanText.toLowerCase().includes('dpp') || cleanText.toLowerCase().includes('osen') || cleanText.toLowerCase().includes('délestage') || cleanText.toLowerCase().includes('offload') || cleanText.toLowerCase().includes('infrastructure');
+
+                    return (
+                      <div
+                        key={idx}
+                        className="flex items-start gap-2.5 p-2.5 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800/80 shadow-2xs hover:border-cyan-400/50 transition-all"
+                      >
+                        <span className="mt-0.5 p-1 rounded-md bg-cyan-50 dark:bg-cyan-950/80 text-cyan-600 dark:text-cyan-400 shrink-0">
+                          {isEval ? (
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                          ) : isPmf ? (
+                            <Shield className="w-3.5 h-3.5" />
+                          ) : isKey ? (
+                            <Key className="w-3.5 h-3.5" />
+                          ) : isCipher ? (
+                            <KeyRound className="w-3.5 h-3.5" />
+                          ) : isRoam ? (
+                            <Zap className="w-3.5 h-3.5" />
+                          ) : isProv ? (
+                            <Sparkles className="w-3.5 h-3.5 text-teal-500" />
+                          ) : isWps ? (
+                            <Radio className="w-3.5 h-3.5 text-amber-500" />
+                          ) : (
+                            <Sparkles className="w-3.5 h-3.5" />
+                          )}
+                        </span>
+                        <div className="text-xs leading-relaxed text-slate-800 dark:text-slate-200 font-sans whitespace-pre-line">
+                          {renderFormattedText(cleanText)}
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed font-sans whitespace-pre-line">
+                    {renderFormattedText(language === 'fr' ? (sec.technicalAnalysisFr || sec.technicalAnalysis || 'Aucune analyse approfondie disponible.') : (sec.technicalAnalysis || 'No in-depth analysis available.'))}
+                  </p>
                 )}
               </div>
-              {sec.keyManagement && sec.keyManagement.length > 0 && sec.type !== 'OPEN' && (
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">
-                  {t('modal.keyMgmt')}{language === 'fr' ? '\u00A0: ' : ': '}<span className="font-semibold text-slate-800 dark:text-slate-200">{sec.keyManagement.join(' + ')}</span>
-                </div>
-              )}
-              <div className="flex items-start justify-between gap-2 p-2 rounded-lg bg-white/70 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 text-[11px] font-sans">
-                <div className="min-w-0 flex-1">
-                  <span className="text-slate-400 font-semibold mr-1.5">{language === 'fr' ? 'Brut\u00A0:' : 'Raw:'}</span>
-                  <span className="text-slate-800 dark:text-slate-200 font-sans text-xs break-all select-all font-semibold">
-                    {ap.authMode || '[]'}
+
+              {/* Technical Feature Chips */}
+              <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-cyan-200/60 dark:border-cyan-900/60 text-[10px]">
+                {!isWigleDevice && (!ap.isWigleOnly || ap.hasCompleteDetails) && sec.type !== 'OPEN' && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-800 font-semibold shadow-2xs">
+                    <KeyRound className="w-3 h-3 text-cyan-600 dark:text-cyan-400" />
+                    {language === 'fr' ? 'Chiffrement\u00A0: ' : 'Cipher: '}{fullCipherSpec}
                   </span>
-                </div>
-                <button
-                  onClick={() => copyToClipboard(ap.authMode, 'authMode')}
-                  className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
-                  title={language === 'fr' ? 'Copier les capacités brutes (capabilities)' : 'Copy raw capability string'}
-                >
-                  {copiedField === 'authMode' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
+                )}
+
+                {!isWigleDevice && (!ap.isWigleOnly || ap.hasCompleteDetails) && (sec.pmfStatus === 'REQUIRED' ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 font-bold shadow-2xs">
+                    <ShieldCheck className="w-3 h-3" />
+                    {t('modal.pmfRequired')}
+                  </span>
+                ) : sec.pmfStatus === 'CAPABLE' ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-300 dark:border-blue-700 font-semibold shadow-2xs">
+                    <ShieldCheck className="w-3 h-3" />
+                    {t('modal.pmfCapable')}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 shadow-2xs">
+                    <Shield className="w-3 h-3 text-slate-400" />
+                    {language === 'fr' ? 'PMF 802.11w\u00A0: Absent' : 'PMF 802.11w: None'}
+                  </span>
+                ))}
+
+                {sec.fastRoaming && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 border border-purple-300 dark:border-purple-700 font-semibold shadow-2xs">
+                    <Zap className="w-3 h-3" />
+                    {t('modal.fastRoaming')}
+                  </span>
+                )}
+
+                {sec.protocols?.includes('DPP') && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 border border-teal-300 dark:border-teal-700 font-semibold shadow-2xs">
+                    <Sparkles className="w-3 h-3 text-teal-600 dark:text-teal-400" />
+                    DPP (Easy Connect)
+                  </span>
+                )}
+
+                {sec.protocols?.includes('OSEN') && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-100 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700 font-semibold shadow-2xs">
+                    <Radio className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                    OSEN (Passpoint)
+                  </span>
+                )}
+
+                {(ap.hasWps || (ap.authMode || '').toUpperCase().includes('WPS')) && (!ap.isWigleOnly || ap.hasCompleteDetails) ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 font-semibold shadow-2xs">
+                    <Radio className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                    {t('modal.wpsActive')}
+                  </span>
+                ) : null}
               </div>
             </div>
-          </div>
+          )}
 
-          {/* Technical Analysis Callout (WiGLE / Android Capabilities Interpretation) */}
-          <div className="bg-gradient-to-r from-cyan-500/10 via-indigo-500/10 to-blue-500/10 dark:from-cyan-950/40 dark:via-indigo-950/30 dark:to-blue-950/40 border border-cyan-300/70 dark:border-cyan-700/60 p-4 rounded-xl space-y-3">
-            <div className="flex items-center justify-between text-xs font-bold text-cyan-800 dark:text-cyan-300">
-              <span className="flex items-center gap-1.5">
-                <Binary className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-                {t('modal.technicalAnalysis')}
-              </span>
-            </div>
-
-            {/* Individual Spaced Bullet Point Cards */}
-            <div className="space-y-2">
-              {analysisPoints.length > 0 ? (
-                analysisPoints.map((pt, idx) => {
-                  const cleanText = pt.startsWith('• ') ? pt.substring(2) : pt;
-                  const isEval = cleanText.toLowerCase().includes('evaluation') || cleanText.toLowerCase().includes('évaluation') || cleanText.toLowerCase().includes('assessment');
-                  const isPmf = cleanText.toLowerCase().includes('frame protection') || cleanText.toLowerCase().includes('protection des trames');
-                  const isKey = cleanText.toLowerCase().includes('key management') || cleanText.toLowerCase().includes('gestion des clés');
-                  const isCipher = cleanText.toLowerCase().includes('symmetric cipher') || cleanText.toLowerCase().includes('chiffrement symétrique') || cleanText.toLowerCase().includes('encryption');
-                  const isRoam = cleanText.toLowerCase().includes('roaming') || cleanText.toLowerCase().includes('mobilité') || cleanText.toLowerCase().includes('itinérance') || cleanText.toLowerCase().includes('initial link');
-                  const isWps = cleanText.toLowerCase().includes('wps') || cleanText.toLowerCase().includes('wi-fi protected setup');
-                  const isProv = cleanText.toLowerCase().includes('provisioning') || cleanText.toLowerCase().includes('provisionnement') || cleanText.toLowerCase().includes('dpp') || cleanText.toLowerCase().includes('osen') || cleanText.toLowerCase().includes('délestage') || cleanText.toLowerCase().includes('offload') || cleanText.toLowerCase().includes('infrastructure');
-
-                  return (
-                    <div
-                      key={idx}
-                      className="flex items-start gap-2.5 p-2.5 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800/80 shadow-2xs hover:border-cyan-400/50 transition-all"
-                    >
-                      <span className="mt-0.5 p-1 rounded-md bg-cyan-50 dark:bg-cyan-950/80 text-cyan-600 dark:text-cyan-400 shrink-0">
-                        {isEval ? (
-                          <ShieldCheck className="w-3.5 h-3.5" />
-                        ) : isPmf ? (
-                          <Shield className="w-3.5 h-3.5" />
-                        ) : isKey ? (
-                          <Key className="w-3.5 h-3.5" />
-                        ) : isCipher ? (
-                          <KeyRound className="w-3.5 h-3.5" />
-                        ) : isRoam ? (
-                          <Zap className="w-3.5 h-3.5" />
-                        ) : isProv ? (
-                          <Sparkles className="w-3.5 h-3.5 text-teal-500" />
-                        ) : isWps ? (
-                          <Radio className="w-3.5 h-3.5 text-amber-500" />
-                        ) : (
-                          <Sparkles className="w-3.5 h-3.5" />
-                        )}
-                      </span>
-                      <div className="text-xs leading-relaxed text-slate-800 dark:text-slate-200 font-sans whitespace-pre-line">
-                        {renderFormattedText(cleanText)}
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed font-sans whitespace-pre-line">
-                  {renderFormattedText(language === 'fr' ? (sec.technicalAnalysisFr || sec.technicalAnalysis || 'Aucune analyse approfondie disponible.') : (sec.technicalAnalysis || 'No in-depth analysis available.'))}
-                </p>
-              )}
-            </div>
-
-            {/* Technical Feature Chips with Exact Bit Lengths and Generous Spacing */}
-            <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-cyan-200/60 dark:border-cyan-900/60 text-[10px]">
-              {!isWigleDevice && (!ap.isWigleOnly || ap.hasCompleteDetails) && sec.type !== 'OPEN' && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-800 font-semibold shadow-2xs">
-                  <KeyRound className="w-3 h-3 text-cyan-600 dark:text-cyan-400" />
-                  {language === 'fr' ? 'Chiffrement\u00A0: ' : 'Cipher: '}{fullCipherSpec}
-                </span>
-              )}
-
-              {!isWigleDevice && (!ap.isWigleOnly || ap.hasCompleteDetails) && (sec.pmfStatus === 'REQUIRED' ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 font-bold shadow-2xs">
-                  <ShieldCheck className="w-3 h-3" />
-                  {t('modal.pmfRequired')}
-                </span>
-              ) : sec.pmfStatus === 'CAPABLE' ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-300 dark:border-blue-700 font-semibold shadow-2xs">
-                  <ShieldCheck className="w-3 h-3" />
-                  {t('modal.pmfCapable')}
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 shadow-2xs">
-                  <Shield className="w-3 h-3 text-slate-400" />
-                  {language === 'fr' ? 'PMF 802.11w\u00A0: Absent' : 'PMF 802.11w: None'}
-                </span>
-              ))}
-
-              {sec.fastRoaming && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 border border-purple-300 dark:border-purple-700 font-semibold shadow-2xs">
-                  <Zap className="w-3 h-3" />
-                  {t('modal.fastRoaming')}
-                </span>
-              )}
-
-              {sec.protocols?.includes('DPP') && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 border border-teal-300 dark:border-teal-700 font-semibold shadow-2xs">
-                  <Sparkles className="w-3 h-3 text-teal-600 dark:text-teal-400" />
-                  DPP (Easy Connect)
-                </span>
-              )}
-
-              {sec.protocols?.includes('OSEN') && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-100 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700 font-semibold shadow-2xs">
-                  <Radio className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
-                  OSEN (Passpoint)
-                </span>
-              )}
-
-              {(ap.hasWps || (ap.authMode || '').toUpperCase().includes('WPS')) && (!ap.isWigleOnly || ap.hasCompleteDetails) ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 font-semibold shadow-2xs">
-                  <Radio className="w-3 h-3 text-amber-600 dark:text-amber-400" />
-                  {t('modal.wpsActive')}
-                </span>
-              ) : null}
-            </div>
-          </div>
-
-          {/* Radio Parameters Card (Frequency & Channel) */}
-          {!isWigleDevice && (
+          {/* Radio Parameters Card (Frequency & Channel - WiFi Only) */}
+          {!isWigleDevice && !isBtDevice && (
             <div className="bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 p-4 rounded-xl space-y-2">
               <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
                 <Wifi className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
@@ -684,19 +785,27 @@ export const NetworkDetailModal: React.FC<NetworkDetailModalProps> = ({ ap, onCl
                       className="px-3 py-2 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
                     >
                       <div className="flex items-center gap-1">
-                        <span>{language === 'fr' ? 'SSID & Chiffrement' : 'SSID & Security'}</span>
+                        <span>
+                          {isBtDevice
+                            ? (language === 'fr' ? 'Nom & Profil' : 'Name & Profile')
+                            : (language === 'fr' ? 'SSID & Chiffrement' : 'SSID & Security')}
+                        </span>
                         {renderDetailSortIndicator('ssid')}
                       </div>
                     </th>
-                    <th
-                      onClick={() => handleDetailSort('channel')}
-                      className="px-3 py-2 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
-                    >
-                      <div className="flex items-center gap-1">
-                        <span>{language === 'fr' ? 'Canal / Fréquence' : 'Channel / Frequency'}</span>
-                        {renderDetailSortIndicator('channel')}
-                      </div>
-                    </th>
+                    {!isBtDevice && (
+                      <th
+                        onClick={() => handleDetailSort('channel')}
+                        className="px-3 py-2 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>
+                            {language === 'fr' ? 'Canal / Fréquence' : 'Channel / Frequency'}
+                          </span>
+                          {renderDetailSortIndicator('channel')}
+                        </div>
+                      </th>
+                    )}
                     <th
                       onClick={() => handleDetailSort('gps')}
                       className="px-3 py-2 cursor-pointer hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
@@ -787,91 +896,110 @@ export const NetworkDetailModal: React.FC<NetworkDetailModalProps> = ({ ap, onCl
                               {obs.rssi}{language === 'fr' ? '\u00A0dBm' : ' dBm'}
                             </span>
                           </td>
-                          {/* SSID per detection with encryption directly below it */}
+                          {/* SSID / Name per detection */}
                           <td className="px-3 py-2 min-w-[130px]">
                             <div
                               className="font-semibold text-slate-900 dark:text-slate-100 truncate max-w-[160px]"
-                              title={obsSsid || (language === 'fr' ? '<SSID Masqué>' : '<Hidden SSID>')}
+                              title={obsSsid || (isBtDevice ? (language === 'fr' ? '<Nom masqué>' : '<Hidden Name>') : (language === 'fr' ? '<SSID Masqué>' : '<Hidden SSID>'))}
                             >
                               {obsSsid ? (
                                 obsSsid
+                              ) : isBtDevice ? (
+                                <i className="text-slate-400 font-normal">
+                                  &lt;{language === 'fr' ? 'Nom masqué' : 'Hidden Name'}&gt;
+                                </i>
                               ) : (
                                 <i className="text-slate-400 font-normal">
                                   &lt;{language === 'fr' ? 'SSID Masqué' : 'Hidden SSID'}&gt;
                                 </i>
                               )}
                             </div>
-                            <div className="flex flex-col gap-0.5 items-start mt-1 cursor-default" title={obsAuth || '[]'}>
-                              <div className="flex items-center gap-1 flex-wrap">
-                                {renderDetailSecurityBadge(obsSec, obsAuth)}
-                                {obsAuth && obsAuth.toUpperCase().includes('WPS') && (
-                                  <span
-                                    className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60 shadow-2xs"
-                                    title={`WPS (Wi-Fi Protected Setup) • ${obsAuth}`}
-                                  >
-                                    WPS
+                            {isBtDevice ? (
+                              <div className="flex items-center gap-1 mt-1 flex-wrap">
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                                  {renderCategoryIcon(ap.btIconName || '')}
+                                  <span>
+                                    {(language === 'fr' ? ap.btCategoryFr : ap.btCategoryEn) ||
+                                      ap.btCategory ||
+                                      (language === 'fr' ? 'Non catégorisé' : 'Uncategorized')}
                                   </span>
-                                )}
+                                </span>
                               </div>
-                              {(() => {
-                                const rawMode = (obsAuth || '').toUpperCase();
-                                const isOweTrans =
-                                  rawMode.includes('OWE-TRANS') ||
-                                  rawMode.includes('OWE_TRANS') ||
-                                  rawMode.includes('OWE-TRANSITION') ||
-                                  rawMode.includes('OWE_TRANSITION') ||
-                                  (rawMode.includes('OWE') && (rawMode.includes('TRANSITION') || rawMode.includes('TRANS'))) ||
-                                  obsSec.label.includes('OWE Transition');
-                                const isOwe = rawMode.includes('OWE') || obsSec.label.includes('OWE');
-
-                                if (isOweTrans) {
-                                  return (
-                                    <span
-                                      className="text-[9.5px] font-semibold text-purple-800 dark:text-purple-200 bg-purple-100/80 dark:bg-purple-950/90 px-1.5 py-0.5 rounded-md border border-purple-300 dark:border-purple-700 shadow-2xs whitespace-nowrap inline-block"
-                                      title={obsAuth || '[]'}
-                                    >
-                                      OWE Transition (WPA3 Enhanced Open)
-                                    </span>
-                                  );
-                                }
-
-                                if (isOwe) {
-                                  return (
-                                    <span
-                                      className="text-[9.5px] font-semibold text-purple-800 dark:text-purple-200 bg-purple-100/80 dark:bg-purple-950/90 px-1.5 py-0.5 rounded-md border border-purple-300 dark:border-purple-700 shadow-2xs whitespace-nowrap inline-block"
-                                      title={obsAuth || '[]'}
-                                    >
-                                      OWE (WPA3 Enhanced Open)
-                                    </span>
-                                  );
-                                }
-
-                                if (obsSec.type === 'OPEN') {
-                                  return null;
-                                }
-
-                                if (!isWigleDevice && !obs.isFromWigleFile && obsSec.cipherLabel) {
-                                  return (
-                                    <span
-                                      className="text-[9px] font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/60 whitespace-nowrap inline-block shadow-2xs"
-                                      title={obsAuth || '[]'}
-                                    >
-                                      {obsSec.cipherLabel}
-                                    </span>
-                                  );
-                                }
-
-                                return null;
-                              })()}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 font-sans text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                            {isWigleDevice || obs.isFromWigleFile || (!obs.channel && (!ap.channel || ap.isWigleOnly)) ? (
-                              <span className="text-slate-400 font-normal">—</span>
                             ) : (
-                              `${language === 'fr' ? 'Canal' : 'Ch'} ${obs.channel || ap.channel} ${obs.frequency ? `(${obs.frequency}${language === 'fr' ? '\u00A0MHz' : ' MHz'})` : ''}`
+                              <div className="flex flex-col gap-0.5 items-start mt-1 cursor-default" title={obsAuth || '[]'}>
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  {renderDetailSecurityBadge(obsSec, obsAuth)}
+                                  {obsAuth && obsAuth.toUpperCase().includes('WPS') && (
+                                    <span
+                                      className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60 shadow-2xs"
+                                      title={`WPS (Wi-Fi Protected Setup) • ${obsAuth}`}
+                                    >
+                                      WPS
+                                    </span>
+                                  )}
+                                </div>
+                                {(() => {
+                                  const rawMode = (obsAuth || '').toUpperCase();
+                                  const isOweTrans =
+                                    rawMode.includes('OWE-TRANS') ||
+                                    rawMode.includes('OWE_TRANS') ||
+                                    rawMode.includes('OWE-TRANSITION') ||
+                                    rawMode.includes('OWE_TRANSITION') ||
+                                    (rawMode.includes('OWE') && (rawMode.includes('TRANSITION') || rawMode.includes('TRANS'))) ||
+                                    obsSec.label.includes('OWE Transition');
+                                  const isOwe = rawMode.includes('OWE') || obsSec.label.includes('OWE');
+
+                                  if (isOweTrans) {
+                                    return (
+                                      <span
+                                        className="text-[9.5px] font-semibold text-purple-800 dark:text-purple-200 bg-purple-100/80 dark:bg-purple-950/90 px-1.5 py-0.5 rounded-md border border-purple-300 dark:border-purple-700 shadow-2xs whitespace-nowrap inline-block"
+                                        title={obsAuth || '[]'}
+                                      >
+                                        OWE Transition (WPA3 Enhanced Open)
+                                      </span>
+                                    );
+                                  }
+
+                                  if (isOwe) {
+                                    return (
+                                      <span
+                                        className="text-[9.5px] font-semibold text-purple-800 dark:text-purple-200 bg-purple-100/80 dark:bg-purple-950/90 px-1.5 py-0.5 rounded-md border border-purple-300 dark:border-purple-700 shadow-2xs whitespace-nowrap inline-block"
+                                        title={obsAuth || '[]'}
+                                      >
+                                        OWE (WPA3 Enhanced Open)
+                                      </span>
+                                    );
+                                  }
+
+                                  if (obsSec.type === 'OPEN') {
+                                    return null;
+                                  }
+
+                                  if (!isWigleDevice && !obs.isFromWigleFile && obsSec.cipherLabel) {
+                                    return (
+                                      <span
+                                        className="text-[9px] font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/60 whitespace-nowrap inline-block shadow-2xs"
+                                        title={obsAuth || '[]'}
+                                      >
+                                        {obsSec.cipherLabel}
+                                      </span>
+                                    );
+                                  }
+
+                                  return null;
+                                })()}
+                              </div>
                             )}
                           </td>
+                          {!isBtDevice && (
+                            <td className="px-3 py-2 font-sans text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                              {isWigleDevice || obs.isFromWigleFile || (!obs.channel && (!ap.channel || ap.isWigleOnly)) ? (
+                                <span className="text-slate-400 font-normal">—</span>
+                              ) : (
+                                `${language === 'fr' ? 'Canal' : 'Ch'} ${obs.channel || ap.channel} ${obs.frequency ? `(${obs.frequency}${language === 'fr' ? '\u00A0MHz' : ' MHz'})` : ''}`
+                              )}
+                            </td>
+                          )}
                           <td className="px-3 py-2 font-sans text-slate-700 dark:text-slate-300 text-[11px] whitespace-nowrap">
                             {obs.latitude !== 0 ? `${obs.latitude.toFixed(5)}, ${obs.longitude.toFixed(5)}` : 'N/A'}
                           </td>

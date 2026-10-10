@@ -4,7 +4,7 @@ import { ProcessedAccessPoint } from '../../types/wigle';
 import { analyzeNetworkHistory } from '../../utils/historyUtils';
 import { formatToEuropeanDate } from '../../utils/statsUtils';
 import { useLanguage } from '../../context/LanguageContext';
-import { History, X, Radio, Lock, ArrowDown, Calendar, Layers, AlertCircle } from 'lucide-react';
+import { History, X, Radio, Bluetooth, Lock, ArrowDown, Calendar, Layers, AlertCircle } from 'lucide-react';
 
 interface NetworkHistoryModalProps {
   isOpen: boolean;
@@ -155,13 +155,19 @@ export const NetworkHistoryModal: React.FC<NetworkHistoryModalProps> = ({
                         </div>
 
                         <div className="flex items-center gap-2 pt-0.5">
-                          <Radio className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                          {isWigleDevice || (ap && (ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT')) ? (
+                            <Bluetooth className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                          ) : (
+                            <Radio className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                          )}
                           <span className="font-bold text-sm text-slate-900 dark:text-white font-sans">
                             {item.ssid ? (
                               item.ssid
                             ) : (
                               <i className="text-slate-400 font-normal">
-                                &lt;{language === 'fr' ? 'SSID Masqué' : 'Hidden SSID'}&gt;
+                                &lt;{(isWigleDevice || (ap && (ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT')))
+                                  ? (language === 'fr' ? 'Nom masqué' : 'Hidden Name')
+                                  : (language === 'fr' ? 'SSID Masqué' : 'Hidden SSID')}&gt;
                               </i>
                             )}
                           </span>

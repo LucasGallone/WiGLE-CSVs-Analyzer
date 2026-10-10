@@ -32,6 +32,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Dashboard Sections
     'dashboard.statsTitle': 'Statistics and Summary of Detected Networks',
+    'dashboard.statsTitleBt': 'Statistics and Summary of Detected Devices',
     'dashboard.filterActive': 'FILTERED',
     'dashboard.mapTitle': 'Interactive Map',
     'dashboard.tableTitle': 'List of detected networks',
@@ -51,6 +52,23 @@ const translations: Record<Language, Record<string, string>> = {
     'table.btnMap': 'Map',
     'table.btnDetails': 'Details',
     'table.unassigned': '[Unassigned by IEEE]',
+
+    // Bluetooth
+    'mode.wifi': 'WiFi Analysis',
+    'mode.bluetooth': 'Bluetooth Analysis',
+    'bt.device': 'Bluetooth Device',
+    'bt.devices': 'Bluetooth Devices',
+    'bt.colName': 'Device Name',
+    'bt.colMac': 'BD_ADDR / MAC',
+    'bt.colCategory': 'Category',
+    'bt.colCompany': 'Manufacturer',
+    'bt.colProtocol': 'Type',
+    'bt.colAddrType': 'Address Type',
+    'bt.statsTitle': 'Bluetooth Devices Statistics & Synthesis',
+    'bt.tableTitle': 'List of detected Bluetooth devices',
+    'bt.categoryBreakdown': 'Bluetooth Device Categories',
+    'bt.protocolBreakdown': 'Protocol Type Breakdown (BLE vs Classic)',
+    'bt.unnamedDevice': '<Unnamed Bluetooth Device>',
 
     // Inspector Details Modal
     'modal.hardwareVendor': 'Manufacturer',
@@ -89,6 +107,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // Dashboard Sections
     'dashboard.statsTitle': 'Statistiques & Synthèse des réseaux détectés',
+    'dashboard.statsTitleBt': 'Statistiques & Synthèse des périphériques détectés',
     'dashboard.filterActive': 'FILTRAGE ACTIF',
     'dashboard.mapTitle': 'Carte Interactive',
     'dashboard.tableTitle': 'Liste des réseaux détectés',
@@ -108,6 +127,23 @@ const translations: Record<Language, Record<string, string>> = {
     'table.btnMap': 'Carte',
     'table.btnDetails': 'Détails',
     'table.unassigned': "[Non assigné par l'IEEE]",
+
+    // Bluetooth
+    'mode.wifi': 'Analyse WiFi',
+    'mode.bluetooth': 'Analyse Bluetooth',
+    'bt.device': 'Périphérique Bluetooth',
+    'bt.devices': 'Périphériques Bluetooth',
+    'bt.colName': 'Nom du périphérique',
+    'bt.colMac': 'BD_ADDR / MAC',
+    'bt.colCategory': 'Catégorie',
+    'bt.colCompany': 'Fabricant',
+    'bt.colProtocol': 'Type',
+    'bt.colAddrType': "Type d'adresse",
+    'bt.statsTitle': 'Statistiques & Synthèse des périphériques Bluetooth',
+    'bt.tableTitle': 'Liste des périphériques Bluetooth détectés',
+    'bt.categoryBreakdown': 'Catégories de périphériques Bluetooth',
+    'bt.protocolBreakdown': 'Répartition des protocoles (BLE vs Classique)',
+    'bt.unnamedDevice': '<Périphérique Bluetooth sans nom>',
 
     // Inspector Details Modal
     'modal.hardwareVendor': 'Fabricant',

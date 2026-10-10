@@ -35,6 +35,8 @@ export interface WigleHeaderInfo {
 
 export type WigleCsvHeader = WigleHeaderInfo;
 
+export type AnalysisMode = 'WIFI' | 'BT';
+
 export type WifiBand = '2.4 GHz' | '5 GHz' | '6 GHz' | '60 GHz' | 'Unknown';
 
 export type SecurityType =
@@ -115,6 +117,20 @@ export interface ProcessedAccessPoint {
   isModified?: boolean;
   hasSsidChanged?: boolean;
   hasSecurityChanged?: boolean;
+  // Bluetooth specific metadata
+  isBluetooth?: boolean;
+  btType?: string;
+  btCategory?: string;
+  btCategoryFr?: string;
+  btCategoryEn?: string;
+  btCategoryGroup?: string;
+  btCompany?: string;
+  btAddressType?: string;
+  btAddressTypeFr?: string;
+  btAddressTypeEn?: string;
+  btProtocol?: 'BLE' | 'BT';
+  btColor?: string;
+  btIconName?: string;
 }
 
 export interface FileMetadata {
@@ -166,4 +182,9 @@ export interface FilterState {
   onlyOpenNetworks: boolean;
   onlyWpa3: boolean;
   onlyModifiedNetworks?: boolean;
+  // Bluetooth specific filters
+  btCategoryFilter?: string; // 'ALL' or category id / name
+  btTypeFilter?: string; // 'ALL' | 'BLE' | 'BT'
+  btCompanyFilter?: string; // 'ALL' or company name
+  onlyNamedBtDevices?: boolean;
 }

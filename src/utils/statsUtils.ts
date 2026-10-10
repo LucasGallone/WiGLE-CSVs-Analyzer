@@ -1,4 +1,79 @@
 import { ProcessedAccessPoint, ScanSessionData } from '../types/wigle';
+import { resolveBtCategory, resolveBtCompany, getBtAddressType } from './bluetoothUtils';
+
+export interface BtCategoryStat {
+  id: string;
+  labelEn: string;
+  labelFr: string;
+  group: string;
+  count: number;
+  percentage: number;
+  percentageFormatted: string;
+  color: string;
+  iconName: string;
+}
+
+export interface BtStatsSummary {
+  totalUniqueDevices: number;
+  totalObservations: number;
+  totalNamedDevices: number;
+  totalUnnamedDevices: number;
+  totalBleDevices: number;
+  totalClassicBtDevices: number;
+  totalUniqueVendors: number;
+  averageRssi: number;
+  bestRssi: number;
+  worstRssi: number;
+  timeRange: {
+    start: string;
+    end: string;
+    durationMinutes: number;
+  };
+  categoryBreakdown: BtCategoryStat[];
+  protocolBreakdown: {
+    protocol: 'BLE' | 'BT';
+    labelEn: string;
+    labelFr: string;
+    count: number;
+    percentage: number;
+    percentageFormatted: string;
+    color: string;
+  }[];
+  vendorBreakdown: {
+    vendor: string;
+    count: number;
+    percentage: number;
+    percentageFormatted: string;
+  }[];
+  allVendorsBreakdown: {
+    vendor: string;
+    count: number;
+    percentage: number;
+    percentageFormatted: string;
+  }[];
+  addressTypeBreakdown: {
+    type: string;
+    labelEn: string;
+    labelFr: string;
+    count: number;
+    percentage: number;
+    percentageFormatted: string;
+    color: string;
+  }[];
+  rssiBreakdown: {
+    range: string;
+    label: string;
+    count: number;
+    percentage: number;
+    percentageFormatted: string;
+    color: string;
+  }[];
+  gpsStats: {
+    pointsWithGps: number;
+    percentageGps: number;
+    areaApproxKm2: number;
+  };
+}
 
 export interface StatsSummary {
   totalUniqueAPs: number;
@@ -580,6 +655,256 @@ export function calculateStats(session: ScanSessionData | null, filteredAps?: Pr
     rssiBreakdown,
     bandBreakdown,
     channelBreakdown,
+    gpsStats: {
+      pointsWithGps,
+      percentageGps,
+      areaApproxKm2,
+    },
+  };
+}
+
+/**
+ * Calculates comprehensive statistics for Bluetooth (BLE and Classic BT) devices.
+ */
+export function calculateBtStats(
+  session: ScanSessionData | null,
+  filteredAps?: ProcessedAccessPoint[]
+): BtStatsSummary | null {
+  const aps = filteredAps || session?.accessPoints || [];
+  if (!aps || aps.length === 0) return null;
+
+  const totalUniqueDevices = aps.length;
+  const totalObservations = aps.reduce((sum, ap) => sum + (ap.observationCount || 1), 0);
+
+  let namedCount = 0;
+  let unnamedCount = 0;
+  let bleCount = 0;
+  let classicCount = 0;
+  let totalRssi = 0;
+  let bestRssi = -Infinity;
+  let worstRssi = Infinity;
+
+  let minTimestamp = Infinity;
+  let maxTimestamp = -Infinity;
+
+  const vendorMap = new Map<string, number>();
+  const categoryMap = new Map<string, { count: number; info: any }>();
+  const addressTypeMap = new Map<string, { count: number; labelEn: string; labelFr: string; color: string }>();
+
+  aps.forEach((ap) => {
+    // Name check
+    if (ap.ssid && ap.ssid.trim().length > 0) {
+      namedCount++;
+    } else {
+      unnamedCount++;
+    }
+
+    // Protocol check
+    const proto = (ap.btProtocol || (ap.type === 'BT' ? 'BT' : 'BLE')) as 'BLE' | 'BT';
+    if (proto === 'BT') classicCount++;
+    else bleCount++;
+
+    // RSSI stats
+    const r = ap.bestRssi || ap.latestRssi || -80;
+    totalRssi += r;
+    if (r > bestRssi) bestRssi = r;
+    if (r < worstRssi) worstRssi = r;
+
+    // Time range
+    if (ap.firstSeen) {
+      const t = Date.parse(ap.firstSeen);
+      if (!isNaN(t)) {
+        if (t < minTimestamp) minTimestamp = t;
+        if (t > maxTimestamp) maxTimestamp = t;
+      }
+    }
+    if (ap.lastSeen) {
+      const t = Date.parse(ap.lastSeen);
+      if (!isNaN(t)) {
+        if (t > maxTimestamp) maxTimestamp = t;
+      }
+    }
+
+    // Vendor / Manufacturer (Combines Bluetooth SIG company or IEEE vendor)
+    const displayVendor = ap.btCompany || ap.vendor || 'Unknown Manufacturer';
+    vendorMap.set(displayVendor, (vendorMap.get(displayVendor) || 0) + 1);
+
+    // Category
+    const catInfo = resolveBtCategory(ap.authMode || ap.btCategory, ap.frequency);
+    const catKey = catInfo.nameEn;
+    const existingCat = categoryMap.get(catKey);
+    if (existingCat) {
+      existingCat.count++;
+    } else {
+      categoryMap.set(catKey, { count: 1, info: catInfo });
+    }
+
+    // Address Type (Public vs Random)
+    const addr = getBtAddressType(ap.mac);
+    const existingAddr = addressTypeMap.get(addr.type);
+    const color =
+      addr.type === 'PUBLIC'
+        ? '#10b981'
+        : addr.type === 'RESOLVABLE_PRIVATE'
+        ? '#6366f1'
+        : addr.type === 'STATIC_RANDOM'
+        ? '#f59e0b'
+        : '#94a3b8';
+    if (existingAddr) {
+      existingAddr.count++;
+    } else {
+      addressTypeMap.set(addr.type, {
+        count: 1,
+        labelEn: addr.labelEn,
+        labelFr: addr.labelFr,
+        color,
+      });
+    }
+  });
+
+  const averageRssi = Math.round(totalRssi / totalUniqueDevices);
+  if (bestRssi === -Infinity) bestRssi = -80;
+  if (worstRssi === Infinity) worstRssi = -80;
+
+  let startDate = '-';
+  let endDate = '-';
+  let durationMinutes = 0;
+  if (minTimestamp !== Infinity && maxTimestamp !== -Infinity) {
+    startDate = new Date(minTimestamp).toISOString();
+    endDate = new Date(maxTimestamp).toISOString();
+    durationMinutes = Math.max(1, Math.round((maxTimestamp - minTimestamp) / (1000 * 60)));
+  }
+
+  // Category breakdown
+  const rawCatList = Array.from(categoryMap.entries()).map(([_, { count, info }]) => ({
+    id: info.id,
+    labelEn: info.nameEn,
+    labelFr: info.nameFr,
+    group: info.group,
+    count,
+    color: info.color,
+    iconName: info.iconName,
+  }));
+  const categoryBreakdown = calculatePercentagesWithExactSum(rawCatList, totalUniqueDevices)
+    .sort((a, b) => b.count - a.count);
+
+  // Protocol breakdown
+  const rawProtoList = [
+    {
+      protocol: 'BLE' as const,
+      labelEn: 'Bluetooth Low Energy (BLE)',
+      labelFr: 'Bluetooth Low Energy (BLE)',
+      count: bleCount,
+      color: '#06b6d4',
+    },
+    {
+      protocol: 'BT' as const,
+      labelEn: 'Classic Bluetooth (BR/EDR)',
+      labelFr: 'Bluetooth Classique (BR/EDR)',
+      count: classicCount,
+      color: '#3b82f6',
+    },
+  ].filter((p) => p.count > 0);
+  const protocolBreakdown = calculatePercentagesWithExactSum(rawProtoList, totalUniqueDevices);
+
+  // Vendor breakdowns
+  const rawVendors = Array.from(vendorMap.entries())
+    .map(([vendor, count]) => ({ vendor, count }))
+    .sort((a, b) => b.count - a.count);
+  const totalUniqueVendors = rawVendors.length;
+  const allVendorsBreakdown = calculatePercentagesWithExactSum(rawVendors, totalUniqueDevices);
+  
+  const rawTopVendors = rawVendors.slice(0, 11);
+  if (rawVendors.length > 11) {
+    const restCount = rawVendors.slice(11).reduce((acc, curr) => acc + curr.count, 0);
+    rawTopVendors.push({
+      vendor: 'Other manufacturers',
+      count: restCount,
+    });
+  }
+  const vendorBreakdown = calculatePercentagesWithExactSum(rawTopVendors, totalUniqueDevices);
+
+  // Address Type breakdown
+  const rawAddrList = Array.from(addressTypeMap.entries()).map(([type, data]) => ({
+    type,
+    labelEn: data.labelEn,
+    labelFr: data.labelFr,
+    count: data.count,
+    color: data.color,
+  }));
+  const addressTypeBreakdown = calculatePercentagesWithExactSum(rawAddrList, totalUniqueDevices)
+    .sort((a, b) => b.count - a.count);
+
+  // RSSI brackets
+  const rssiRanges = [
+    { min: -60, max: 0, range: '>-60 dBm', label: 'Excellent Signal', color: '#10b981' },
+    { min: -75, max: -61, range: '-61 to -75 dBm', label: 'Good Signal', color: '#06b6d4' },
+    { min: -85, max: -76, range: '-76 to -85 dBm', label: 'Average Signal', color: '#f59e0b' },
+    { min: -100, max: -86, range: '<-85 dBm', label: 'Weak Signal', color: '#ef4444' },
+  ];
+  const rawRssiList = rssiRanges.map((r) => {
+    const count = aps.filter((ap) => {
+      const sig = ap.bestRssi || ap.latestRssi || -80;
+      return sig >= r.min && sig <= r.max;
+    }).length;
+    return {
+      range: r.range,
+      label: r.label,
+      count,
+      color: r.color,
+    };
+  });
+  const rssiBreakdown = calculatePercentagesWithExactSum(rawRssiList, totalUniqueDevices);
+
+  // GPS Stats
+  const gpsAps = aps.filter((a) => a.latitude !== 0 && a.longitude !== 0);
+  const pointsWithGps = gpsAps.length;
+  const percentageGps = totalUniqueDevices > 0 ? (pointsWithGps / totalUniqueDevices) * 100 : 0;
+
+  let areaApproxKm2 = 0;
+  if (gpsAps.length >= 2) {
+    let minLat = Infinity;
+    let maxLat = -Infinity;
+    let minLng = Infinity;
+    let maxLng = -Infinity;
+
+    for (let i = 0; i < gpsAps.length; i++) {
+      const lat = gpsAps[i].latitude;
+      const lng = gpsAps[i].longitude;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+    }
+
+    const latDistKm = (maxLat - minLat) * 111;
+    const avgLatRad = ((minLat + maxLat) / 2) * (Math.PI / 180);
+    const lngDistKm = (maxLng - minLng) * (111 * Math.cos(avgLatRad));
+    areaApproxKm2 = Math.round(latDistKm * lngDistKm * 100) / 100;
+  }
+
+  return {
+    totalUniqueDevices,
+    totalObservations,
+    totalNamedDevices: namedCount,
+    totalUnnamedDevices: unnamedCount,
+    totalBleDevices: bleCount,
+    totalClassicBtDevices: classicCount,
+    totalUniqueVendors,
+    averageRssi,
+    bestRssi,
+    worstRssi,
+    timeRange: {
+      start: startDate,
+      end: endDate,
+      durationMinutes,
+    },
+    categoryBreakdown,
+    protocolBreakdown,
+    vendorBreakdown,
+    allVendorsBreakdown,
+    addressTypeBreakdown,
+    rssiBreakdown,
     gpsStats: {
       pointsWithGps,
       percentageGps,
