@@ -16,16 +16,16 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [theme, setThemeState] = useState<Theme>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored === 'light' || stored === 'dark') {
-        return stored;
+      if (stored === 'dark') {
+        return 'dark';
       }
-      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+      if (stored === 'light') {
         return 'light';
       }
     } catch {
       // Ignore localStorage errors
     }
-    return 'dark';
+    return 'light';
   });
 
   useEffect(() => {
