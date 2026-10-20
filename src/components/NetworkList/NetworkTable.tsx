@@ -2464,8 +2464,8 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                           const displayRssi = isDateFiltered ? getDayBestRssi(ap, filters.dateFilter) : ap.bestRssi;
                           const tooltip = isDateFiltered
                             ? (language === 'fr'
-                                ? `Maximum (toutes journées confondues) : ${ap.bestRssi}\u00A0dBm`
-                                : `Maximum (all days): ${ap.bestRssi} dBm`)
+                                ? `Meilleur signal (Toutes journées confondues) : ${ap.bestRssi}\u00A0dBm`
+                                : `Best signal observed (All days included): ${ap.bestRssi} dBm`)
                             : undefined;
                           return getRssiBadge(displayRssi, tooltip);
                         })()}
