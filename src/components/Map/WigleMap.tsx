@@ -32,10 +32,11 @@ import {
   Target,
   History,
   Calendar,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { analyzeNetworkHistory } from '../../utils/historyUtils';
+import { analyzeNetworkHistory, getDayBestRssi, getApObservedChannelsInfo } from '../../utils/historyUtils';
 import { NetworkHistoryModal } from '../NetworkList/NetworkHistoryModal';
 import { getWigleSignalTier } from '../../utils/wigleSignalColors';
 import { formatToEuropeanDate } from '../../utils/statsUtils';
@@ -62,6 +63,7 @@ interface WigleMapProps {
   totalGpsPointsCount?: number;
   onResetFilters?: () => void;
   isOnlyModifiedFilterActive?: boolean;
+  dateFilter?: string;
 }
 
 // Extend Leaflet Canvas 2D renderer prototype to draw network count numbers and selection halos directly on Canvas
@@ -287,6 +289,7 @@ export const WigleMap: React.FC<WigleMapProps> = ({
   totalGpsPointsCount = 0,
   onResetFilters,
   isOnlyModifiedFilterActive = false,
+  dateFilter,
 }) => {
   const { theme } = useTheme();
   const { language } = useLanguage();
@@ -977,7 +980,7 @@ export const WigleMap: React.FC<WigleMapProps> = ({
       delete (window as any).__wigleMapSelectAp;
       delete (window as any).__wigleMapOpenGroup;
     };
-  }, [locationGroups, selectedAp, activeLocationFilter, theme, accessPoints, activeGroup, drawerMode, handleOpenPointGroup, isTriangulationMode, language, hoveredApMac, viewportBounds]);
+  }, [locationGroups, selectedAp, activeLocationFilter, theme, accessPoints, activeGroup, drawerMode, handleOpenPointGroup, isTriangulationMode, language, hoveredApMac, viewportBounds, dateFilter]);
 
   // Auto-fit map bounds strictly when a new dataset is loaded (never on zoom/pan or group change)
   const lastDatasetKeyRef = useRef<string>('');
@@ -1216,8 +1219,12 @@ export const WigleMap: React.FC<WigleMapProps> = ({
             return (a.vendor || '').localeCompare(b.vendor || '');
           case 'SECURITY':
             return (a.security?.label || '').localeCompare(b.security?.label || '');
-          case 'SIGNAL':
-            return b.bestRssi - a.bestRssi; // Strongest first (-30 before -80)
+          case 'SIGNAL': {
+            const isDateFiltered = Boolean(dateFilter && dateFilter !== 'ALL');
+            const sigA = isDateFiltered ? getDayBestRssi(a, dateFilter) : a.bestRssi;
+            const sigB = isDateFiltered ? getDayBestRssi(b, dateFilter) : b.bestRssi;
+            return sigB - sigA; // Strongest first (-30 before -80)
+          }
           case 'CHANNEL': {
             const chA = typeof a.channel === 'number' ? a.channel : parseInt(String(a.channel), 10) || 0;
             const chB = typeof b.channel === 'number' ? b.channel : parseInt(String(b.channel), 10) || 0;
@@ -1230,7 +1237,7 @@ export const WigleMap: React.FC<WigleMapProps> = ({
         }
       });
     },
-    [drawerSort]
+    [drawerSort, dateFilter]
   );
 
   // Filtered networks inside active point group
@@ -1295,13 +1302,14 @@ export const WigleMap: React.FC<WigleMapProps> = ({
   }, [visibleViewportAps, drawerSearch, drawerSecurityFilter, sortNetworks, isBtMode]);
 
   // Helper badge for RSSI with WiGLE 7-tier colors and high readability font
-  const renderRssiBadge = (rssi: number) => {
+  const renderRssiBadge = (rssi: number, tooltip?: string) => {
     const tier = getWigleSignalTier(rssi);
     const levelLabel = language === 'fr' ? tier.labelFr : tier.labelEn;
 
     return (
       <span
-        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border tracking-tight font-sans shadow-xs shrink-0 ${tier.badgeClasses}`}
+        title={tooltip}
+        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border tracking-tight font-sans shadow-xs shrink-0 ${tier.badgeClasses} ${tooltip ? 'cursor-help' : ''}`}
       >
         <span>{rssi}{language === 'fr' ? '\u00A0dBm' : ' dBm'}</span>
         <span className="font-semibold opacity-90">({levelLabel})</span>
@@ -1870,7 +1878,16 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                           </button>
                         )}
                       </div>
-                      {renderRssiBadge(ap.bestRssi)}
+                      {(() => {
+                        const isDateFiltered = Boolean(dateFilter && dateFilter !== 'ALL');
+                        const displayRssi = isDateFiltered ? getDayBestRssi(ap, dateFilter) : ap.bestRssi;
+                        const tooltip = isDateFiltered
+                          ? (language === 'fr'
+                              ? `Meilleur signal (Toutes journées confondues) : ${ap.bestRssi}\u00A0dBm`
+                              : `Best signal observed (All days included): ${ap.bestRssi} dBm`)
+                          : undefined;
+                        return renderRssiBadge(displayRssi, tooltip);
+                      })()}
                     </div>
 
                     {/* MAC, Vendor & Channel / GHz / GPS (Vertically centered between SSID and Encryption) */}
@@ -1897,9 +1914,26 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                             <span className="text-slate-400 dark:text-slate-500 font-sans font-medium text-xs">—</span>
                           ) : (
                             <>
-                              <span className="font-sans font-bold text-xs text-slate-700 dark:text-slate-300 leading-tight">
-                                {language === 'fr' ? 'Canal' : 'Ch.'} {ap.channel}
-                              </span>
+                              {(() => {
+                                const chInfo = getApObservedChannelsInfo(ap);
+                                return (
+                                  <span className="font-sans font-bold text-xs text-slate-700 dark:text-slate-300 leading-tight inline-flex items-center gap-1">
+                                    <span>{language === 'fr' ? 'Canal' : 'Ch.'} {ap.channel}</span>
+                                    {chInfo.hasMultipleChannels && (
+                                      <span
+                                        className="inline-flex items-center justify-center p-0.5 rounded bg-amber-100 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-700/80 text-amber-700 dark:text-amber-300 cursor-help shrink-0 shadow-2xs"
+                                        title={
+                                          language === 'fr'
+                                            ? `Réseau observé sur plusieurs canaux : ${chInfo.channelsList}`
+                                            : `Network observed on multiple channels: ${chInfo.channelsList}`
+                                        }
+                                      >
+                                        <ArrowLeftRight className="w-2.5 h-2.5" strokeWidth={2.75} />
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              })()}
                               <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 leading-tight">
                                 {ap.band}
                               </span>
@@ -2033,16 +2067,6 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                 );
               })
             )}
-          </div>
-
-          {/* Drawer Footer Status */}
-          <div className="p-2 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px] text-slate-500 dark:text-slate-400 flex items-center justify-end">
-            <button
-              onClick={handleCloseDrawer}
-              className="text-cyan-600 dark:text-cyan-400 hover:underline font-semibold cursor-pointer"
-            >
-              {language === 'fr' ? 'Fermer le menu latéral' : 'Close lateral menu'}
-            </button>
           </div>
         </div>
       )}

@@ -213,3 +213,101 @@ export function analyzeNetworkHistory(ap: ProcessedAccessPoint): NetworkHistoryA
     securityTimeline,
   };
 }
+
+/**
+ * Extracts a normalized YYYY-MM-DD date key from any timestamp string/number.
+ */
+export function extractDateKey(timestamp?: string | number | null): string {
+  if (!timestamp) return '';
+  const ms = parseTimestampToMs(timestamp);
+  if (ms <= 0) return '';
+  const d = new Date(ms);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Returns the best (strongest / maximum) RSSI recorded for an AP on a specific date (YYYY-MM-DD).
+ * If no observation matches or dateKey is 'ALL'/empty, returns ap.bestRssi.
+ */
+export function getDayBestRssi(ap: ProcessedAccessPoint, dateKey?: string | null): number {
+  if (!dateKey || dateKey === 'ALL') {
+    return ap.bestRssi;
+  }
+
+  let dayBest = -Infinity;
+
+  if (ap.observations && ap.observations.length > 0) {
+    for (let i = 0; i < ap.observations.length; i++) {
+      const obs = ap.observations[i];
+      if (extractDateKey(obs.timestamp) === dateKey) {
+        if (typeof obs.rssi === 'number' && !isNaN(obs.rssi) && obs.rssi > dayBest) {
+          dayBest = obs.rssi;
+        }
+      }
+    }
+  }
+
+  if (dayBest === -Infinity) {
+    const firstDate = extractDateKey(ap.firstSeen);
+    const lastDate = extractDateKey(ap.lastSeen);
+    if (firstDate === dateKey || lastDate === dateKey) {
+      return ap.bestRssi;
+    }
+    return ap.bestRssi;
+  }
+
+  return dayBest;
+}
+
+/**
+ * Analyzes whether an Access Point has been observed across more than one distinct WiFi channel.
+ * Returns the boolean status and formatted channel list.
+ */
+export function getApObservedChannelsInfo(ap: ProcessedAccessPoint): {
+  hasMultipleChannels: boolean;
+  channelsList: string;
+} {
+  if (!ap) {
+    return { hasMultipleChannels: false, channelsList: '' };
+  }
+
+  if (ap.hasMultipleChannels && ap.observedChannels && ap.observedChannels.length > 1) {
+    return {
+      hasMultipleChannels: true,
+      channelsList: ap.observedChannels.join(', '),
+    };
+  }
+
+  // Fallback dynamic calculation if not precomputed or observation count > 1
+  if (ap.observationCount <= 1 || !ap.observations || ap.observations.length <= 1) {
+    return { hasMultipleChannels: false, channelsList: '' };
+  }
+
+  const chSet = new Set<string>();
+  for (let i = 0; i < ap.observations.length; i++) {
+    const obs = ap.observations[i];
+    const ch = (obs.channel !== undefined && obs.channel !== null ? String(obs.channel) : String(ap.channel || '')).trim();
+    if (ch && ch !== '0' && ch !== 'Unknown') {
+      chSet.add(ch);
+    }
+  }
+
+  if (chSet.size > 1) {
+    const sorted = Array.from(chSet).sort((a, b) => {
+      const nA = parseInt(a, 10);
+      const nB = parseInt(b, 10);
+      if (!isNaN(nA) && !isNaN(nB)) return nA - nB;
+      return a.localeCompare(b);
+    });
+    return {
+      hasMultipleChannels: true,
+      channelsList: sorted.join(', '),
+    };
+  }
+
+  return { hasMultipleChannels: false, channelsList: '' };
+}
+

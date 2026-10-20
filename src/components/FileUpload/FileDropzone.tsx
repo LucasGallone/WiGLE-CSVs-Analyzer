@@ -410,8 +410,8 @@ export const FileDropzone: React.FC<FileDropzoneProps> = ({
             </p>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               {language === 'fr'
-                ? 'Format attendu\u00A0: CSV (WiFi ou Bluetooth)'
-                : 'Expected format: CSV (WiFi or Bluetooth)'}
+                ? 'Format attendu\u00A0: CSV'
+                : 'Expected format: CSV'}
             </p>
           </div>
 

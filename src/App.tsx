@@ -93,7 +93,7 @@ function AppContent() {
     session.accessPoints.forEach((ap) => {
       if (ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined) {
         bt++;
-      } else {
+      } else if ((ap.type || '').toUpperCase() === 'WIFI') {
         wifi++;
       }
     });
@@ -421,8 +421,8 @@ function AppContent() {
         return true;
       }
 
-      // WIFI MODE
-      if (ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined) return false;
+      // WIFI MODE: Seules les lignes avec le type WIFI (non sensible à la casse) devront être affichées en mode WiFi
+      if ((ap.type || '').toUpperCase() !== 'WIFI' || ap.btProtocol !== undefined) return false;
 
       // 1. Search query (strictly restricted to SSID, BSSID/MAC, OUI)
       if (filters.searchQuery) {
@@ -908,6 +908,7 @@ function AppContent() {
                 totalGpsPointsCount={totalGpsPointsCount}
                 onResetFilters={() => setFilters(initialFilters)}
                 isOnlyModifiedFilterActive={Boolean(filters.onlyModifiedNetworks)}
+                dateFilter={filters.dateFilter}
               />
             </section>
 
@@ -932,7 +933,7 @@ function AppContent() {
 
               <NetworkTable
                 accessPoints={filteredAps}
-                allAccessPoints={session.accessPoints}
+                allAccessPoints={analysisMode === 'WIFI' ? session.accessPoints.filter((ap) => (ap.type || '').toUpperCase() === 'WIFI') : session.accessPoints}
                 selectedAp={selectedAp}
                 onSelectAp={(ap) => setSelectedAp(ap)}
                 onInspectAp={(ap) => setInspectingAp(ap)}

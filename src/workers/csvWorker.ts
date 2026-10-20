@@ -127,56 +127,61 @@ self.onmessage = async (e: MessageEvent) => {
           const rawMac = cols[colMap.MAC ?? 0] || '';
           if (!rawMac || rawMac.length < 5 || rawMac.startsWith('#')) continue;
 
-          // Detect Type across all columns (handles unnamed columns to the right, e.g. BLE in extra column)
-          let detectedType: 'WIFI' | 'BLE' | 'BT' | 'OTHER' = 'OTHER';
-
-          for (let cIdx = cols.length - 1; cIdx >= 0; cIdx--) {
-            const val = (cols[cIdx] || '').replace(/["']/g, '').trim().toUpperCase();
-            if (val === 'WIFI') {
-              detectedType = 'WIFI';
-              break;
-            } else if (val === 'BLE' || val === 'BTLE') {
-              detectedType = 'BLE';
-              break;
-            } else if (val === 'BT' || val === 'BLUETOOTH') {
-              detectedType = 'BT';
-              break;
-            }
-          }
-
-          if (detectedType === 'OTHER' && colMap.TYPE !== undefined && cols[colMap.TYPE] !== undefined) {
-            const val = (cols[colMap.TYPE] || '').replace(/["']/g, '').trim().toUpperCase();
-            if (val === 'WIFI') detectedType = 'WIFI';
-            else if (val === 'BLE' || val === 'BTLE') detectedType = 'BLE';
-            else if (val === 'BT' || val === 'BLUETOOTH') detectedType = 'BT';
-          }
-
           const authMode = cols[colMap.AUTHMODE ?? 2] || '';
           const freqRaw = cols[colMap.FREQUENCY ?? 5];
           const freqNum = freqRaw ? parseInt(freqRaw, 10) : undefined;
 
-          // Fallback detection for Bluetooth if type column is absent or ambiguous
-          if (detectedType === 'OTHER') {
-            const authUpper = authMode.toUpperCase();
-            if (
-              authUpper.includes('MISC') ||
-              authUpper.includes('UNCATEGORIZED') ||
-              authUpper.includes('KEYBOARD') ||
-              authUpper.includes('HEADPHONE') ||
-              authUpper.includes('CAR AUDIO') ||
-              freqNum === 7936 ||
-              freqNum === 1344 ||
-              freqNum === 1028 ||
-              freqNum === 524
-            ) {
-              detectedType = 'BLE';
-            } else if (authUpper.includes('WPA') || authUpper.includes('WEP') || authUpper.includes('ESS') || authUpper.includes('RSN')) {
-              detectedType = 'WIFI';
+          // Extract explicit Type column value from CSV (or fallback to standard column 11)
+          const rawCsvType = (colMap.TYPE !== undefined && cols[colMap.TYPE] !== undefined
+            ? cols[colMap.TYPE]
+            : (cols.length > 11 ? cols[11] : '')
+          ).replace(/["']/g, '').trim();
+          const rawCsvTypeUpper = rawCsvType.toUpperCase();
+
+          let detectedType: 'WIFI' | 'BLE' | 'BT' | 'OTHER' = 'OTHER';
+
+          if (rawCsvTypeUpper === 'WIFI') {
+            detectedType = 'WIFI';
+          } else if (rawCsvTypeUpper === 'BLE' || rawCsvTypeUpper === 'BTLE') {
+            detectedType = 'BLE';
+          } else if (rawCsvTypeUpper === 'BT' || rawCsvTypeUpper === 'BLUETOOTH') {
+            detectedType = 'BT';
+          } else {
+            // Bluetooth check across columns (handles unnamed columns to the right, e.g. BLE in extra column)
+            for (let cIdx = cols.length - 1; cIdx >= 0; cIdx--) {
+              const val = (cols[cIdx] || '').replace(/["']/g, '').trim().toUpperCase();
+              if (val === 'BLE' || val === 'BTLE') {
+                detectedType = 'BLE';
+                break;
+              } else if (val === 'BT' || val === 'BLUETOOTH') {
+                detectedType = 'BT';
+                break;
+              }
+            }
+
+            // Fallback detection for Bluetooth if type column is absent or ambiguous (Bluetooth mode untouched)
+            if (detectedType === 'OTHER') {
+              const authUpper = authMode.toUpperCase();
+              if (
+                authUpper.includes('MISC') ||
+                authUpper.includes('UNCATEGORIZED') ||
+                authUpper.includes('KEYBOARD') ||
+                authUpper.includes('HEADPHONE') ||
+                authUpper.includes('CAR AUDIO') ||
+                freqNum === 7936 ||
+                freqNum === 1344 ||
+                freqNum === 1028 ||
+                freqNum === 524
+              ) {
+                detectedType = 'BLE';
+              }
             }
           }
 
           const isBluetooth = detectedType === 'BLE' || detectedType === 'BT';
-          const type = isBluetooth ? (detectedType === 'BT' ? 'BT' : 'BLE') : 'WIFI';
+          const type = isBluetooth
+            ? (detectedType === 'BT' ? 'BT' : 'BLE')
+            : (detectedType === 'WIFI' ? 'WIFI' : rawCsvType);
 
           const mac = normalizeMac(rawMac);
           const ssid = (cols[colMap.SSID ?? 1] || '').trim();
@@ -219,6 +224,9 @@ self.onmessage = async (e: MessageEvent) => {
           const existing = apMap.get(mac);
           if (existing) {
             addObservationCompacted(existing, observation, fileName);
+            if (type.toUpperCase() === 'WIFI' && (existing.type || '').toUpperCase() !== 'WIFI') {
+              existing.type = 'WIFI';
+            }
           } else {
             const { vendor, oui } = resolveVendor(mac, customOuiMap);
             const band = hasValidChannel ? frequencyOrChannelToBand(frequency, channel) : (isWigleFile ? 'Unknown' : frequencyOrChannelToBand(frequency, channel));

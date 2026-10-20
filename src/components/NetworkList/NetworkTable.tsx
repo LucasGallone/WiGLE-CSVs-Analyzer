@@ -37,25 +37,15 @@ import {
   Activity,
   Tag,
   Cpu,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
-import { analyzeNetworkHistory, parseTimestampToMs } from '../../utils/historyUtils';
+import { analyzeNetworkHistory, parseTimestampToMs, extractDateKey, getDayBestRssi, getApObservedChannelsInfo } from '../../utils/historyUtils';
 import { classifySecurity } from '../../utils/csvParser';
 import { NetworkHistoryModal } from './NetworkHistoryModal';
 import { getWigleSignalTier } from '../../utils/wigleSignalColors';
 import { formatToEuropeanDate } from '../../utils/statsUtils';
 import { BT_CATEGORY_MAP, resolveBtCategory, resolveBtCompany, getBtAddressType } from '../../utils/bluetoothUtils';
-
-function extractDateKey(timestamp?: string | null): string {
-  if (!timestamp) return '';
-  const ms = parseTimestampToMs(timestamp);
-  if (ms <= 0) return '';
-  const d = new Date(ms);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
 
 // Reusable cached Collator for 30x faster SSID alphabetization without Intl recreation
 const ssidCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
@@ -688,11 +678,15 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
         case 'authMode':
           comparison = a.authMode < b.authMode ? -1 : a.authMode > b.authMode ? 1 : 0;
           break;
-        case 'bestRssi':
+        case 'bestRssi': {
           // Arrow UP ('asc') -> Best signal first (-30 dBm before -100 dBm)
           // Arrow DOWN ('desc') -> Weakest signal first (-100 dBm before -30 dBm)
-          comparison = b.bestRssi - a.bestRssi;
+          const isDateFiltered = Boolean(filters.dateFilter && filters.dateFilter !== 'ALL');
+          const valA = isDateFiltered ? getDayBestRssi(a, filters.dateFilter) : a.bestRssi;
+          const valB = isDateFiltered ? getDayBestRssi(b, filters.dateFilter) : b.bestRssi;
+          comparison = valB - valA;
           break;
+        }
         case 'channel': {
           const chA = typeof a.channel === 'number' ? a.channel : parseInt(String(a.channel), 10) || 0;
           const chB = typeof b.channel === 'number' ? b.channel : parseInt(String(b.channel), 10) || 0;
@@ -716,7 +710,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
       }
       return sortOrder === 'asc' ? comparison : -comparison;
     });
-  }, [filteredAps, sortField, sortOrder, language]);
+  }, [filteredAps, sortField, sortOrder, language, filters.dateFilter]);
 
   // Pagination
   const totalItems = sortedAps.length;
@@ -738,10 +732,13 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
 
   // WiGLE for Android 7-tier RSSI colors:
   // > -50 dBm (Vert pur), -50 to -59 (Vert clair), -60 to -69 (Vert-Jaune), -70 to -79 (Jaune), -80 to -89 (Orange), -90 to -99 (Rouge-Orange), <= -100 (Rouge pur)
-  const getRssiBadge = (rssi: number) => {
+  const getRssiBadge = (rssi: number, tooltip?: string) => {
     const tier = getWigleSignalTier(rssi);
     return (
-      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border tracking-tight font-sans ${tier.badgeClasses}`}>
+      <span
+        title={tooltip}
+        className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border tracking-tight font-sans ${tier.badgeClasses} ${tooltip ? 'cursor-help' : ''}`}
+      >
         {rssi}{language === 'fr' ? '\u00A0dBm' : ' dBm'}
       </span>
     );
@@ -1956,7 +1953,16 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
 
                         {/* Best RSSI */}
                         <td className="px-1.5 py-2 whitespace-nowrap text-center">
-                          {getRssiBadge(ap.bestRssi)}
+                          {(() => {
+                            const isDateFiltered = Boolean(filters.dateFilter && filters.dateFilter !== 'ALL');
+                            const displayRssi = isDateFiltered ? getDayBestRssi(ap, filters.dateFilter) : ap.bestRssi;
+                            const tooltip = isDateFiltered
+                              ? (language === 'fr'
+                                  ? `Meilleur signal (Toutes journées confondues) : ${ap.bestRssi}\u00A0dBm`
+                                  : `Best signal observed (All days included): ${ap.bestRssi} dBm`)
+                              : undefined;
+                            return getRssiBadge(displayRssi, tooltip);
+                          })()}
                         </td>
 
                         {/* First Seen */}
@@ -2425,9 +2431,26 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                             <span className="text-slate-400 dark:text-slate-500 font-sans font-medium text-xs">—</span>
                           ) : (
                             <div className="flex flex-col items-center justify-center gap-1">
-                              <span className="text-slate-800 dark:text-slate-200 font-bold font-sans text-xs leading-tight">
-                                {language === 'fr' ? 'Canal' : 'Ch.'} {ap.channel}
-                              </span>
+                              {(() => {
+                                const chInfo = getApObservedChannelsInfo(ap);
+                                return (
+                                  <span className="text-slate-800 dark:text-slate-200 font-bold font-sans text-xs leading-tight inline-flex items-center gap-1">
+                                    <span>{language === 'fr' ? 'Canal' : 'Ch.'} {ap.channel}</span>
+                                    {chInfo.hasMultipleChannels && (
+                                      <span
+                                        className="inline-flex items-center justify-center p-0.5 rounded bg-amber-100 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-700/80 text-amber-700 dark:text-amber-300 cursor-help shrink-0 shadow-2xs"
+                                        title={
+                                          language === 'fr'
+                                            ? `Réseau observé sur plusieurs canaux : ${chInfo.channelsList}`
+                                            : `Network observed on multiple channels: ${chInfo.channelsList}`
+                                        }
+                                      >
+                                        <ArrowLeftRight className="w-2.5 h-2.5" strokeWidth={2.75} />
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              })()}
                               <div className="leading-tight">{getBandBadge(ap.band)}</div>
                             </div>
                           )}
@@ -2436,7 +2459,16 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
 
                       {/* Best RSSI */}
                       <td className="px-1.5 py-2 whitespace-nowrap text-center">
-                        {getRssiBadge(ap.bestRssi)}
+                        {(() => {
+                          const isDateFiltered = Boolean(filters.dateFilter && filters.dateFilter !== 'ALL');
+                          const displayRssi = isDateFiltered ? getDayBestRssi(ap, filters.dateFilter) : ap.bestRssi;
+                          const tooltip = isDateFiltered
+                            ? (language === 'fr'
+                                ? `Maximum (toutes journées confondues) : ${ap.bestRssi}\u00A0dBm`
+                                : `Maximum (all days): ${ap.bestRssi} dBm`)
+                            : undefined;
+                          return getRssiBadge(displayRssi, tooltip);
+                        })()}
                       </td>
 
                       {/* First Seen */}

@@ -40,8 +40,10 @@ import {
   Bot,
   Tv,
   Laptop,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
+import { getApObservedChannelsInfo } from '../../utils/historyUtils';
 
 interface NetworkDetailModalProps {
   ap: ProcessedAccessPoint | null;
@@ -580,7 +582,26 @@ export const NetworkDetailModal: React.FC<NetworkDetailModalProps> = ({ ap, onCl
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                   <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
                     <div className="text-slate-500 dark:text-slate-400 text-[10px]">{language === 'fr' ? 'Canal' : 'Channel'}</div>
-                    <div className="font-sans font-bold text-slate-900 dark:text-white text-sm">Ch {ap.channel}</div>
+                    {(() => {
+                      const chInfo = getApObservedChannelsInfo(ap);
+                      return (
+                        <div className="font-sans font-bold text-slate-900 dark:text-white text-sm inline-flex items-center gap-1.5">
+                          <span>Ch {ap.channel}</span>
+                          {chInfo.hasMultipleChannels && (
+                            <span
+                              className="inline-flex items-center justify-center p-0.5 rounded bg-amber-100 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-700/80 text-amber-700 dark:text-amber-300 cursor-help shrink-0 shadow-2xs"
+                              title={
+                                language === 'fr'
+                                  ? `Réseau observé sur plusieurs canaux : ${chInfo.channelsList}`
+                                  : `Network observed on multiple channels: ${chInfo.channelsList}`
+                              }
+                            >
+                              <ArrowLeftRight className="w-3 h-3" strokeWidth={2.5} />
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
                     <div className="text-slate-500 dark:text-slate-400 text-[10px]">{language === 'fr' ? 'Fréquence' : 'Frequency'}</div>

@@ -117,6 +117,8 @@ export interface ProcessedAccessPoint {
   isModified?: boolean;
   hasSsidChanged?: boolean;
   hasSecurityChanged?: boolean;
+  hasMultipleChannels?: boolean;
+  observedChannels?: string[];
   // Bluetooth specific metadata
   isBluetooth?: boolean;
   btType?: string;
