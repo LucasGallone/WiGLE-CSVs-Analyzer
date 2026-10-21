@@ -1373,6 +1373,17 @@ export const WigleMap: React.FC<WigleMapProps> = ({
     }
     const sec = ap.security;
     const rawTitle = (ap.authMode && ap.authMode.trim() !== '') ? ap.authMode : (sec.label ? `[${sec.label}]` : '[]');
+    if (sec.type === 'WEP') {
+      return (
+        <span
+          title={rawTitle}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-400 dark:border-rose-600 cursor-default"
+        >
+          <Lock className="w-3 h-3 stroke-[2.5] text-rose-600 dark:text-rose-400 shrink-0" />
+          <span>WEP</span>
+        </span>
+      );
+    }
     if (sec.type === 'OPEN' || !sec.isSecure) {
       return (
         <span
@@ -1447,17 +1458,6 @@ export const WigleMap: React.FC<WigleMapProps> = ({
         >
           <Lock className="w-3 h-3 stroke-[2.5] text-sky-600 dark:text-sky-400 shrink-0" />
           <span>WPA1/WPA2</span>
-        </span>
-      );
-    }
-    if (sec.type === 'WEP') {
-      return (
-        <span
-          title={rawTitle}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-400 dark:border-rose-600 cursor-default"
-        >
-          <Lock className="w-3 h-3 stroke-[2.5] text-rose-600 dark:text-rose-400 shrink-0" />
-          <span>WEP</span>
         </span>
       );
     }
@@ -2008,8 +2008,8 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                             );
                           }
 
-                          if (ap.security.type === 'OPEN') {
-                            return null; // Never display [ESS] as a cipher
+                          if (ap.security.type === 'OPEN' || ap.security.type === 'WEP') {
+                            return null; // Never display [ESS] as a cipher and avoid redundant WEP sub-label
                           }
 
                           if (!isBtMode && !isWigleDevice && ap.security.cipherLabel) {

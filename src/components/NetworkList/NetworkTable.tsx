@@ -746,6 +746,17 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
 
   const renderSecurityBadge = (sec: SecurityCategory, rawAuth: string) => {
     const rawTitle = (rawAuth && rawAuth.trim() !== '') ? rawAuth : (sec.label ? `[${sec.label}]` : '[]');
+    if (sec.type === 'WEP') {
+      return (
+        <span
+          title={rawTitle}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-400 dark:border-rose-600 shadow-xs whitespace-nowrap cursor-default"
+        >
+          <Lock className="w-3.5 h-3.5 stroke-[2.5] text-rose-600 dark:text-rose-400 shrink-0" />
+          <span title={rawTitle}>WEP</span>
+        </span>
+      );
+    }
     if (sec.type === 'OPEN' || !sec.isSecure) {
       return (
         <span
@@ -820,17 +831,6 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
         >
           <Lock className="w-3.5 h-3.5 stroke-[2.5] text-sky-600 dark:text-sky-400 shrink-0" />
           <span>WPA1/WPA2</span>
-        </span>
-      );
-    }
-    if (sec.type === 'WEP') {
-      return (
-        <span
-          title={rawTitle}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-400 dark:border-rose-600 shadow-xs whitespace-nowrap cursor-default"
-        >
-          <Lock className="w-3.5 h-3.5 stroke-[2.5] text-rose-600 dark:text-rose-400 shrink-0" />
-          <span title={rawTitle}>WEP</span>
         </span>
       );
     }
@@ -1162,11 +1162,11 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                   <option value="OPEN">{language === 'fr' ? 'Ouvert (Non chiffré + OWE)' : 'Open (Unencrypted + OWE)'}</option>
                   <option value="WEP">WEP</option>
                   <option value="WPA">WPA1 (PSK)</option>
-                  {!isWigleDevice && <option value="WPA_WPA2">{language === 'fr' ? 'WPA1 / WPA2 (Mixte)' : 'WPA1 / WPA2 (Mixed)'}</option>}
                   {!isWigleDevice && <option value="WPA1_ENTERPRISE">{language === 'fr' ? 'WPA1 Entreprise' : 'WPA1 Enterprise'}</option>}
+                  {!isWigleDevice && <option value="WPA_WPA2">{language === 'fr' ? 'WPA1 / WPA2 (Mixte)' : 'WPA1 / WPA2 (Mixed)'}</option>}
                   <option value="WPA2">WPA2 (PSK)</option>
-                  {!isWigleDevice && <option value="WPA2_WPA3">{language === 'fr' ? 'WPA2 / WPA3 (Transition)' : 'WPA2 / WPA3 (Transition)'}</option>}
                   {!isWigleDevice && <option value="ENTERPRISE">{language === 'fr' ? 'WPA2 Entreprise' : 'WPA2 Enterprise'}</option>}
+                  {!isWigleDevice && <option value="WPA2_WPA3">{language === 'fr' ? 'WPA2 / WPA3 (Transition)' : 'WPA2 / WPA3 (Transition)'}</option>}
                   <option value="WPA3">WPA3 (SAE)</option>
                   {!isWigleDevice && <option value="WPA3_ENTERPRISE">{language === 'fr' ? 'WPA3 Entreprise' : 'WPA3 Enterprise'}</option>}
                 </select>
@@ -2401,8 +2401,8 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                               );
                             }
 
-                            if (ap.security.type === 'OPEN') {
-                              return null; // [ESS] is not a cipher: do not show anything as cipher for open networks
+                            if (ap.security.type === 'OPEN' || ap.security.type === 'WEP') {
+                              return null; // [ESS] is not a cipher: do not show anything as cipher for open networks, and avoid redundant sub-label for WEP
                             }
 
                             if (!isWigleDevice && ap.security.cipherLabel) {

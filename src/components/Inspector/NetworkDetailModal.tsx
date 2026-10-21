@@ -134,11 +134,22 @@ export const NetworkDetailModal: React.FC<NetworkDetailModalProps> = ({ ap, onCl
 
   const renderDetailSecurityBadge = (secCat: typeof sec, rawAuth: string) => {
     const rawTitle = rawAuth || secCat.label || '[]';
+    if (secCat.type === 'WEP') {
+      return (
+        <span
+          title={rawTitle}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-400 dark:border-rose-600 shadow-xs whitespace-nowrap cursor-default"
+        >
+          <Lock className="w-3 h-3 stroke-[2.5] text-rose-600 dark:text-rose-400 shrink-0" />
+          <span>WEP</span>
+        </span>
+      );
+    }
     if (secCat.type === 'OPEN' || !secCat.isSecure) {
       return (
         <span
           title={rawTitle}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-semibold bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-400 dark:border-rose-600 shadow-xs whitespace-nowrap cursor-default"
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-400 dark:border-rose-600 shadow-xs whitespace-nowrap cursor-default"
         >
           <Unlock className="w-3 h-3 stroke-[2] text-rose-600 dark:text-rose-400 shrink-0" />
           <span>OPEN</span>
@@ -208,17 +219,6 @@ export const NetworkDetailModal: React.FC<NetworkDetailModalProps> = ({ ap, onCl
         >
           <Lock className="w-3 h-3 stroke-[2.5] text-sky-600 dark:text-sky-400 shrink-0" />
           <span>WPA1/WPA2</span>
-        </span>
-      );
-    }
-    if (secCat.type === 'WEP') {
-      return (
-        <span
-          title={rawTitle}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-400 dark:border-rose-600 shadow-xs whitespace-nowrap cursor-default"
-        >
-          <Lock className="w-3 h-3 stroke-[2.5] text-rose-600 dark:text-rose-400 shrink-0" />
-          <span>WEP</span>
         </span>
       );
     }

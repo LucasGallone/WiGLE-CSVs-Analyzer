@@ -716,7 +716,7 @@ export function classifySecurity(authMode: string): SecurityCategory {
       type: 'WEP',
       label: 'WEP',
       color: '#f97316', // Orange
-      isSecure: false,
+      isSecure: true,
       ciphers: ciphers.length > 0 ? ciphers : ['WEP (104-bit)'],
       cipherLabel: cipherLabel || 'WEP (104-bit)',
       keyManagement: keyMgmt,
