@@ -226,6 +226,9 @@ self.onmessage = async (e: MessageEvent) => {
             addObservationCompacted(existing, observation, fileName);
             if (type.toUpperCase() === 'WIFI' && (existing.type || '').toUpperCase() !== 'WIFI') {
               existing.type = 'WIFI';
+            } else if (isBluetooth && (existing.type || '').toUpperCase() !== 'BLE' && (existing.type || '').toUpperCase() !== 'BT') {
+              existing.type = type;
+              existing.btProtocol = type as 'BLE' | 'BT';
             }
           } else {
             const { vendor, oui } = resolveVendor(mac, customOuiMap);
@@ -307,22 +310,32 @@ self.onmessage = async (e: MessageEvent) => {
           if (calcPct > maxPercentSeen) {
             maxPercentSeen = calcPct;
           }
+          const isBtMode = (analysisMode || '').toUpperCase() === 'BT';
+          const filteredApCount = isBtMode
+            ? Array.from(apMap.values()).filter(ap => ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined).length
+            : Array.from(apMap.values()).filter(ap => (ap.type || '').toUpperCase() === 'WIFI').length;
+
           self.postMessage({
             type: 'PROGRESS',
             fileName,
             rowsParsed,
-            uniqueApsCount: apMap.size,
+            uniqueApsCount: filteredApCount,
             percent: maxPercentSeen,
           });
         }
       },
       complete: () => {
         header.totalRows = totalRowsCount;
+        const isBtMode = (analysisMode || '').toUpperCase() === 'BT';
+        const finalFilteredApCount = isBtMode
+          ? Array.from(apMap.values()).filter(ap => ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined).length
+          : Array.from(apMap.values()).filter(ap => (ap.type || '').toUpperCase() === 'WIFI').length;
+
         self.postMessage({
           type: 'PROGRESS',
           fileName,
           rowsParsed: totalRowsCount,
-          uniqueApsCount: apMap.size,
+          uniqueApsCount: finalFilteredApCount,
           percent: 100,
         });
         synchronizeLatestApObservations(apMap);

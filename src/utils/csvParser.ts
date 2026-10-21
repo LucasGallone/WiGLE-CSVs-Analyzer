@@ -1838,6 +1838,9 @@ export async function parseWigleCsvFileStreaming(
             addObservationCompacted(existing, observation, fileName);
             if (type.toUpperCase() === 'WIFI' && (existing.type || '').toUpperCase() !== 'WIFI') {
               existing.type = 'WIFI';
+            } else if (isBluetooth && (existing.type || '').toUpperCase() !== 'BLE' && (existing.type || '').toUpperCase() !== 'BT') {
+              existing.type = type;
+              existing.btProtocol = type as 'BLE' | 'BT';
             }
           } else {
             const { vendor, oui } = resolveVendor(mac, customOuiMap);
@@ -1921,10 +1924,15 @@ export async function parseWigleCsvFileStreaming(
             if (calcPct > maxPercentSeen) {
               maxPercentSeen = calcPct;
             }
+            const isBtMode = (analysisMode || '').toUpperCase() === 'BT';
+            const filteredApCount = isBtMode
+              ? Array.from(apMap.values()).filter(ap => ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined).length
+              : Array.from(apMap.values()).filter(ap => (ap.type || '').toUpperCase() === 'WIFI').length;
+
             onProgress({
               fileName,
               rowsParsed,
-              uniqueApsCount: apMap.size,
+              uniqueApsCount: filteredApCount,
               percent: maxPercentSeen,
             });
           }
@@ -1937,10 +1945,15 @@ export async function parseWigleCsvFileStreaming(
       complete: async () => {
         header.totalRows = rowsParsed;
         if (onProgress) {
+          const isBtMode = (analysisMode || '').toUpperCase() === 'BT';
+          const finalFilteredApCount = isBtMode
+            ? Array.from(apMap.values()).filter(ap => ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined).length
+            : Array.from(apMap.values()).filter(ap => (ap.type || '').toUpperCase() === 'WIFI').length;
+
           onProgress({
             fileName,
             rowsParsed,
-            uniqueApsCount: apMap.size,
+            uniqueApsCount: finalFilteredApCount,
             percent: 100,
           });
           await new Promise((r) => setTimeout(r, 20));

@@ -153,6 +153,7 @@ function AppContent() {
   // High-performance streaming loader for large files (+100MB) without freezing the UI
   const handleLoadFiles = async (files: File[], mode?: AnalysisMode) => {
     if (!files || files.length === 0) return;
+    const chosenMode = mode || analysisMode;
     if (mode) {
       setAnalysisMode(mode);
     }
@@ -195,7 +196,8 @@ function AppContent() {
               }
               return progress;
             });
-          }
+          },
+          chosenMode
         );
 
         setSession((prevSession) => {
@@ -206,7 +208,8 @@ function AppContent() {
             parsed.rawRecords,
             file.name,
             customOuiMap,
-            parsed.accessPoints
+            parsed.accessPoints,
+            chosenMode
           );
         });
 
@@ -237,6 +240,7 @@ function AppContent() {
     if (!fileName.toLowerCase().endsWith('.csv')) {
       return;
     }
+    const chosenMode = mode || analysisMode;
     if (mode) {
       setAnalysisMode(mode);
     }
@@ -264,7 +268,8 @@ function AppContent() {
             }
             return progress;
           });
-        }
+        },
+        chosenMode
       );
       setSession((prevSession) => {
         const baseSession = isAppend ? prevSession : null;
@@ -274,7 +279,8 @@ function AppContent() {
           parsed.rawRecords,
           fileName,
           customOuiMap,
-          parsed.accessPoints
+          parsed.accessPoints,
+          chosenMode
         );
       });
       setIsImportModalOpen(false);
@@ -769,7 +775,7 @@ function AppContent() {
                   <Layers className="w-3.5 h-3.5 shrink-0" />
                   <span>
                     <strong>{(session.totalRecords || session.rawRecords?.length || session.accessPoints.reduce((sum, ap) => sum + ap.observationCount, 0)).toLocaleString()}</strong>{' '}
-                    {language === 'fr' ? 'captures au total' : 'captures in total'}
+                    {language === 'fr' ? 'lignes importées' : 'rows imported'}
                   </span>
                 </span>
 
@@ -984,7 +990,7 @@ function AppContent() {
               onLoadCsv={handleLoadCsv}
               onClearSession={handleClearSession}
               loadedFiles={session?.files || []}
-              totalAps={session?.accessPoints.length || 0}
+              totalAps={analysisMode === 'BT' ? btCount : wifiCount}
               totalRecords={session?.totalRecords || session?.rawRecords?.length || session?.accessPoints.reduce((sum, ap) => sum + ap.observationCount, 0) || 0}
               headerInfo={session?.header}
               isInitialModal={false}
