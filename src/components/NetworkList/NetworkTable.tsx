@@ -41,11 +41,11 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 import { analyzeNetworkHistory, parseTimestampToMs, extractDateKey, getDayBestRssi, getApObservedChannelsInfo } from '../../utils/historyUtils';
-import { classifySecurity } from '../../utils/csvParser';
+import { classifySecurity, getApSubLabel, getApCipherForFilter } from '../../utils/csvParser';
 import { NetworkHistoryModal } from './NetworkHistoryModal';
 import { getWigleSignalTier } from '../../utils/wigleSignalColors';
 import { formatToEuropeanDate } from '../../utils/statsUtils';
-import { BT_CATEGORY_MAP, resolveBtCategory, resolveBtCompany, getBtAddressType } from '../../utils/bluetoothUtils';
+import { BT_CATEGORY_MAP, resolveBtCategory, resolveBtCompany, getBtAddressType, isBluetoothAuthMode } from '../../utils/bluetoothUtils';
 
 // Reusable cached Collator for 30x faster SSID alphabetization without Intl recreation
 const ssidCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
@@ -350,81 +350,64 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
     };
   }, [sessionAps, language]);
 
-  // Dynamic cipher algorithms for the selected security type (except WEP)
+  // Dynamic cipher algorithms / sub-labels for the selected security type (or across all types if none selected)
   const selectedSecType = filters.securityFilter.length === 1 ? filters.securityFilter[0] : null;
-  const isEligibleForCipherFilter = Boolean(
-    selectedSecType && selectedSecType !== 'ALL' && selectedSecType !== 'WEP'
-  );
 
   const availableAlgorithmsForSelectedSec = useMemo(() => {
-    if (!isEligibleForCipherFilter || !selectedSecType) return [];
+    if (analysisMode === 'BT') return [];
     const countMap = new Map<string, number>();
 
-    sessionAps
-      .filter((ap) => ap.security.type === selectedSecType)
-      .forEach((ap) => {
-        const algos = new Set<string>();
-        const rawAuth = (ap.authMode || '').toUpperCase();
-        const isWpa3Enterprise192 =
-          rawAuth.includes('SUITE-B') ||
-          rawAuth.includes('EAP/SHA384') ||
-          rawAuth.includes('EAP-SHA384') ||
-          rawAuth.includes('SHA384') ||
-          ap.security.type === 'WPA3_ENTERPRISE';
+    const wifiAps = sessionAps.filter((ap) => (ap.type || '').toUpperCase() === 'WIFI' && !ap.isBluetooth && ap.btProtocol === undefined && !isBluetoothAuthMode(ap.authMode));
+    const targetAps = selectedSecType && selectedSecType !== 'ALL'
+      ? wifiAps.filter((ap) => ap.security.type === selectedSecType)
+      : wifiAps;
 
-        if (rawAuth.includes('TKIP')) algos.add('TKIP');
-        if (rawAuth.includes('CCMP-256') || (rawAuth.includes('CCMP') && rawAuth.includes('256'))) algos.add('CCMP-256');
-        else if (rawAuth.includes('CCMP') || rawAuth.includes('AES')) algos.add('CCMP');
-
-        if (rawAuth.includes('GCMP-256') || (isWpa3Enterprise192 && rawAuth.includes('GCMP'))) algos.add('GCMP-256');
-        else if (rawAuth.includes('GCMP-128') || (rawAuth.includes('GCMP') && !rawAuth.includes('256') && !isWpa3Enterprise192)) algos.add('GCMP-128');
-
-        if (rawAuth.includes('AES') && !rawAuth.includes('CCMP') && !rawAuth.includes('GCMP')) algos.add('AES');
-        if (rawAuth.includes('OWE')) algos.add('OWE');
-        if (rawAuth.includes('SAE')) algos.add('SAE');
-
-        if (ap.security.ciphers && ap.security.ciphers.length > 0) {
-          ap.security.ciphers.forEach((c) => {
-            const upper = c.toUpperCase();
-            if (upper.includes('TKIP')) algos.add('TKIP');
-
-            if (upper.includes('CCMP-256') || upper.includes('256')) {
-              algos.add('CCMP-256');
-            } else if (upper.includes('CCMP') || upper.includes('AES')) {
-              algos.add('CCMP');
-            }
-
-            if (upper.includes('GCMP-256') || upper.includes('256') || (isWpa3Enterprise192 && upper.includes('GCMP'))) {
-              algos.add('GCMP-256');
-            } else if (upper.includes('GCMP-128') || (upper.includes('GCMP') && !upper.includes('256') && !isWpa3Enterprise192)) {
-              algos.add('GCMP-128');
-            }
-          });
-        }
-
-        if (algos.size === 0 && ap.security.cipherLabel) {
-          const upperLabel = ap.security.cipherLabel.toUpperCase();
-          if (upperLabel.includes('GCMP') && (upperLabel.includes('256') || isWpa3Enterprise192)) algos.add('GCMP-256');
-          else if (upperLabel.includes('GCMP')) algos.add('GCMP-128');
-          else if (upperLabel.includes('CCMP') && upperLabel.includes('256')) algos.add('CCMP-256');
-          else if (upperLabel.includes('CCMP') || upperLabel.includes('AES')) algos.add('CCMP');
-          else algos.add(ap.security.cipherLabel);
-        }
-
-        algos.forEach((algo) => {
-          countMap.set(algo, (countMap.get(algo) || 0) + 1);
-        });
-      });
+    targetAps.forEach((ap) => {
+      const algo = getApCipherForFilter(ap, language);
+      if (algo) {
+        countMap.set(algo, (countMap.get(algo) || 0) + 1);
+      }
+    });
 
     return Array.from(countMap.entries())
       .map(([algo, count]) => ({ algo, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [sessionAps, selectedSecType, isEligibleForCipherFilter]);
+      .sort((a, b) => a.algo.localeCompare(b.algo));
+  }, [sessionAps, selectedSecType, analysisMode, language]);
+
+  const isEligibleForCipherFilter = Boolean(
+    analysisMode !== 'BT' &&
+    selectedSecType !== 'WEP' &&
+    availableAlgorithmsForSelectedSec.length > 0
+  );
+
+  // Synchronize cipherAlgorithmFilter if securityFilter or available algorithms change externally
+  useEffect(() => {
+    if (!filters.isCipherFilterActive) return;
+    if (selectedSecType === 'WEP') {
+      onUpdateFilters((prev) => ({ ...prev, isCipherFilterActive: false }));
+      return;
+    }
+    if (availableAlgorithmsForSelectedSec.length === 0) {
+      return;
+    }
+    const isCurrentValid =
+      filters.cipherAlgorithmFilter &&
+      availableAlgorithmsForSelectedSec.some((a) => a.algo === filters.cipherAlgorithmFilter);
+    if (!isCurrentValid) {
+      const fallback = availableAlgorithmsForSelectedSec[0]?.algo || '';
+      onUpdateFilters((prev) => ({
+        ...prev,
+        cipherAlgorithmFilter: fallback,
+      }));
+    }
+  }, [selectedSecType, availableAlgorithmsForSelectedSec, filters.isCipherFilterActive, filters.cipherAlgorithmFilter, onUpdateFilters]);
 
   // Filter Access Points / Bluetooth Devices
   const filteredAps = useMemo(() => {
     return accessPoints.filter((ap) => {
+      const isBt = ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined || ap.isBluetooth || isBluetoothAuthMode(ap.authMode);
       if (analysisMode === 'BT') {
+        if (!isBt) return false;
         // 1. Bluetooth Search Query (by Device Name / SSID, MAC, OUI, Vendor, Company, Category)
         if (filters.searchQuery) {
           const q = filters.searchQuery.toLowerCase().trim();
@@ -476,6 +459,9 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
           if (!matchCompany) return false;
         }
       } else {
+        if ((ap.type || '').toUpperCase() !== 'WIFI' || isBt) {
+          return false;
+        }
         // 1. Search Query (STRICTLY by SSID, BSSID/MAC, or OUI prefix for WiFi)
         if (filters.searchQuery) {
           const q = filters.searchQuery.toLowerCase().trim();
@@ -490,58 +476,24 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
           if (!filters.securityFilter.includes(ap.security.type)) return false;
         }
 
-        // 2b. Dynamic Cipher Algorithm Filter (when active security filter is not WEP and cipher filter toggle is enabled)
+        // 2b. Dynamic Cipher Algorithm Filter
         if (
           filters.isCipherFilterActive &&
-          filters.cipherAlgorithmFilter &&
-          filters.cipherAlgorithmFilter !== 'ALL' &&
           isEligibleForCipherFilter
         ) {
-          const target = filters.cipherAlgorithmFilter.toUpperCase();
-          const rawAuth = (ap.authMode || '').toUpperCase();
-          const ciphers = (ap.security.ciphers || []).map((c) => c.toUpperCase());
-          const cipherLabel = (ap.security.cipherLabel || '').toUpperCase();
-          const isWpa3Ent192 =
-            rawAuth.includes('SUITE-B') ||
-            rawAuth.includes('EAP/SHA384') ||
-            rawAuth.includes('EAP-SHA384') ||
-            rawAuth.includes('SHA384') ||
-            ap.security.type === 'WPA3_ENTERPRISE';
-
-          let match = false;
-
-          if (target === 'GCMP-256') {
-            match =
-              rawAuth.includes('GCMP-256') ||
-              (isWpa3Ent192 && rawAuth.includes('GCMP')) ||
-              ciphers.some((c) => c.includes('GCMP-256') || c.includes('256')) ||
-              (cipherLabel.includes('GCMP') && (cipherLabel.includes('256') || isWpa3Ent192));
-          } else if (target === 'GCMP-128') {
-            match =
-              (rawAuth.includes('GCMP-128') || (rawAuth.includes('GCMP') && !rawAuth.includes('256') && !isWpa3Ent192)) ||
-              ciphers.some((c) => c.includes('GCMP-128') || (c.includes('GCMP') && !c.includes('256') && !isWpa3Ent192)) ||
-              (cipherLabel.includes('GCMP') && !cipherLabel.includes('256') && !isWpa3Ent192);
-          } else if (target === 'CCMP-256') {
-            match =
-              rawAuth.includes('CCMP-256') ||
-              (rawAuth.includes('CCMP') && rawAuth.includes('256')) ||
-              ciphers.some((c) => c.includes('CCMP-256') || c.includes('256')) ||
-              (cipherLabel.includes('CCMP') && cipherLabel.includes('256'));
-          } else if (target === 'CCMP') {
-            match =
-              (rawAuth.includes('CCMP') && !rawAuth.includes('256')) ||
-              rawAuth.includes('AES') ||
-              ciphers.some((c) => c.includes('CCMP') || c.includes('AES')) ||
-              cipherLabel.includes('CCMP') ||
-              cipherLabel.includes('AES');
-          } else {
-            match =
-              rawAuth.includes(target) ||
-              ciphers.some((c) => c.includes(target)) ||
-              cipherLabel.includes(target);
+          const selectedCipher = (filters.cipherAlgorithmFilter && filters.cipherAlgorithmFilter !== 'ALL' && availableAlgorithmsForSelectedSec.some((a) => a.algo === filters.cipherAlgorithmFilter))
+            ? filters.cipherAlgorithmFilter
+            : (availableAlgorithmsForSelectedSec[0]?.algo || '');
+          if (selectedCipher) {
+            const apCipher = getApCipherForFilter(ap, language);
+            const isNoEncFilter = selectedCipher === 'Aucun chiffrement' || selectedCipher === 'No encryption';
+            if (isNoEncFilter) {
+              const isApNoEnc = apCipher === 'Aucun chiffrement' || apCipher === 'No encryption';
+              if (!isApNoEnc) return false;
+            } else if (apCipher !== selectedCipher) {
+              return false;
+            }
           }
-
-          if (!match) return false;
         }
 
         // 3. WiFi Channel / Band (Unified Filter)
@@ -612,7 +564,8 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
       }
 
       // 7. RSSI Range
-      if (ap.bestRssi < filters.minRssi || ap.bestRssi > filters.maxRssi) return false;
+      if (filters.minRssi > -100 && ap.bestRssi < filters.minRssi) return false;
+      if (filters.maxRssi < 0 && ap.bestRssi > filters.maxRssi) return false;
 
       // 8. Hardware Vendor Filter
       if (filters.vendorFilter && filters.vendorFilter !== 'ALL') {
@@ -905,7 +858,8 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
         filters.vendorFilter !== 'ALL' ||
         filters.ouiFilter !== 'ALL' ||
         filters.locationFilter !== null ||
-        Boolean(filters.onlyModifiedNetworks);
+        Boolean(filters.onlyModifiedNetworks) ||
+        Boolean(filters.isCipherFilterActive && filters.cipherAlgorithmFilter);
 
   // Extract unique Bluetooth categories from session
   const btAvailableCategories = useMemo(() => {
@@ -1005,7 +959,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
           </button>
         </div>
 
-        {/* Filter Toggle Button */}
+        {/* Filter Toggle & Reset Buttons */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
@@ -1020,6 +974,26 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
             {hasActiveFilters && (
               <span className="w-2 h-2 rounded-full bg-cyan-500"></span>
             )}
+          </button>
+
+          {/* Reset Filters Button */}
+          <button
+            type="button"
+            disabled={!hasActiveFilters}
+            onClick={() => {
+              setSearchInputValue('');
+              setCurrentPage(1);
+              onResetFilters();
+            }}
+            className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border text-xs font-semibold transition-all shrink-0 ${
+              hasActiveFilters
+                ? 'bg-slate-50 dark:bg-slate-950 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-rose-400 hover:text-rose-600 dark:hover:border-rose-700 dark:hover:text-rose-400 hover:bg-rose-50/50 dark:hover:bg-rose-950/40 cursor-pointer shadow-xs active:scale-[0.98]'
+                : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed opacity-50'
+            }`}
+            title={language === 'fr' ? 'Réinitialiser tous les filtres' : 'Reset the filters'}
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>{language === 'fr' ? 'Réinitialiser les filtres' : 'Reset the filters'}</span>
           </button>
         </div>
       </div>
@@ -1148,9 +1122,39 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                   value={filters.securityFilter.length === 1 ? filters.securityFilter[0] : 'ALL'}
                   onChange={(e) => {
                     const val = e.target.value;
+                    const newSecType = val === 'ALL' ? null : val;
+
+                    const wifiAps = sessionAps.filter((ap) => (ap.type || '').toUpperCase() === 'WIFI' && !ap.isBluetooth && ap.btProtocol === undefined && !isBluetoothAuthMode(ap.authMode));
+                    const targetAps = newSecType
+                      ? wifiAps.filter((ap) => ap.security.type === newSecType)
+                      : wifiAps;
+
+                    const newAlgosSet = new Set<string>();
+                    targetAps.forEach((ap) => {
+                      const algo = getApCipherForFilter(ap, language);
+                      if (algo) newAlgosSet.add(algo);
+                    });
+                    const sortedNewAlgos = Array.from(newAlgosSet).sort((a, b) => a.localeCompare(b));
+
+                    const canKeepCurrentCipher =
+                      filters.cipherAlgorithmFilter &&
+                      filters.cipherAlgorithmFilter !== 'ALL' &&
+                      newAlgosSet.has(filters.cipherAlgorithmFilter);
+
+                    const nextCipher = canKeepCurrentCipher
+                      ? filters.cipherAlgorithmFilter
+                      : (sortedNewAlgos[0] || '');
+
+                    const shouldKeepCipherActive =
+                      Boolean(filters.isCipherFilterActive) &&
+                      newSecType !== 'WEP' &&
+                      sortedNewAlgos.length > 0;
+
                     onUpdateFilters((prev) => ({
                       ...prev,
                       securityFilter: val === 'ALL' ? [] : [val],
+                      cipherAlgorithmFilter: nextCipher,
+                      isCipherFilterActive: shouldKeepCipherActive,
                     }));
                     setCurrentPage(1);
                   }}
@@ -1174,27 +1178,36 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                 {/* Dynamic Cipher Algorithm Filter */}
                 {isEligibleForCipherFilter && availableAlgorithmsForSelectedSec.length > 0 && (
                   <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-800 space-y-1.5 animate-fadeIn">
-                    <label className="flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300 font-semibold cursor-pointer select-none">
+                    <label className="inline-flex items-center gap-2.5 cursor-pointer select-none text-xs font-semibold text-slate-800 dark:text-slate-200 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors">
                       <input
                         type="checkbox"
                         checked={Boolean(filters.isCipherFilterActive)}
                         onChange={(e) => {
                           const checked = e.target.checked;
+                          const defaultAlgo = availableAlgorithmsForSelectedSec[0]?.algo || '';
                           onUpdateFilters((prev) => ({
                             ...prev,
                             isCipherFilterActive: checked,
-                            cipherAlgorithmFilter: checked ? prev.cipherAlgorithmFilter || 'ALL' : 'ALL',
+                            cipherAlgorithmFilter: checked
+                              ? (prev.cipherAlgorithmFilter && prev.cipherAlgorithmFilter !== 'ALL' && availableAlgorithmsForSelectedSec.some((a) => a.algo === prev.cipherAlgorithmFilter)
+                                  ? prev.cipherAlgorithmFilter
+                                  : defaultAlgo)
+                              : defaultAlgo,
                           }));
                           setCurrentPage(1);
                         }}
-                        className="accent-cyan-500 rounded"
+                        className="w-4 h-4 text-cyan-600 rounded border-slate-300 dark:border-slate-700 focus:ring-cyan-500 cursor-pointer accent-cyan-600"
                       />
-                      <span>{language === 'fr' ? 'Filtrer par algorithme de chiffrement (ex. AES-CCMP)' : 'Filter by cipher algorithm (e.g. AES-CCMP)'}</span>
+                      <span>{language === 'fr' ? 'Filtrer par algorithme de chiffrement' : 'Filter by cipher algorithm'}</span>
                     </label>
 
                     {filters.isCipherFilterActive && (
                       <select
-                        value={filters.cipherAlgorithmFilter || 'ALL'}
+                        value={
+                          filters.cipherAlgorithmFilter && filters.cipherAlgorithmFilter !== 'ALL' && availableAlgorithmsForSelectedSec.some((a) => a.algo === filters.cipherAlgorithmFilter)
+                            ? filters.cipherAlgorithmFilter
+                            : (availableAlgorithmsForSelectedSec[0]?.algo || '')
+                        }
                         onChange={(e) => {
                           onUpdateFilters((prev) => ({
                             ...prev,
@@ -1204,12 +1217,9 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                         }}
                         className="w-full bg-white dark:bg-slate-900 border border-cyan-400 dark:border-cyan-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 font-medium animate-fadeIn"
                       >
-                        <option value="ALL">
-                          {language === 'fr' ? 'Tous les algorithmes' : 'All algorithms / ciphers'}
-                        </option>
                         {availableAlgorithmsForSelectedSec.map(({ algo, count }) => (
                           <option key={algo} value={algo}>
-                            {algo} ({count.toLocaleString()} {language === 'fr' ? (count > 1 ? 'réseaux' : 'réseau') : (count > 1 ? 'APs' : 'AP')})
+                            {algo} — {count.toLocaleString()} {language === 'fr' ? (count > 1 ? 'réseaux' : 'réseau') : (count > 1 ? 'networks' : 'network')}
                           </option>
                         ))}
                       </select>
@@ -1498,16 +1508,6 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 m-0 p-0"
                   />
                 </div>
-
-                {hasActiveFilters && (
-                  <button
-                    onClick={onResetFilters}
-                    className="flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400 hover:underline font-semibold whitespace-nowrap cursor-pointer shrink-0"
-                  >
-                    <FilterX className="w-3.5 h-3.5" />
-                    {language === 'fr' ? 'Réinitialiser' : 'Reset'}
-                  </button>
-                )}
               </div>
             </div>
 
@@ -2369,57 +2369,28 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                             )}
                           </div>
                           {(() => {
-                            const rawMode = (ap.authMode || '').toUpperCase();
-                            const isOweTrans =
-                              rawMode.includes('OWE-TRANS') ||
-                              rawMode.includes('OWE_TRANS') ||
-                              rawMode.includes('OWE-TRANSITION') ||
-                              rawMode.includes('OWE_TRANSITION') ||
-                              (rawMode.includes('OWE') && (rawMode.includes('TRANSITION') || rawMode.includes('TRANS'))) ||
-                              ap.security.label.includes('OWE Transition');
-                            const isOwe = rawMode.includes('OWE') || ap.security.label.includes('OWE');
+                            const subLabel = getApSubLabel(ap);
+                            if (!subLabel) return null;
 
-                            if (isOweTrans) {
+                            if (subLabel.startsWith('OWE')) {
                               return (
                                 <span
                                   className="text-[11px] font-semibold text-purple-800 dark:text-purple-200 bg-purple-100/80 dark:bg-purple-950/90 px-2 py-0.5 rounded-md border border-purple-300 dark:border-purple-700 shadow-2xs whitespace-nowrap inline-block"
                                   title={ap.authMode || '[]'}
                                 >
-                                  OWE Transition (WPA3 Enhanced Open)
+                                  {subLabel}
                                 </span>
                               );
                             }
 
-                            if (isOwe) {
-                              return (
-                                <span
-                                  className="text-[11px] font-semibold text-purple-800 dark:text-purple-200 bg-purple-100/80 dark:bg-purple-950/90 px-2 py-0.5 rounded-md border border-purple-300 dark:border-purple-700 shadow-2xs whitespace-nowrap inline-block"
-                                  title={ap.authMode || '[]'}
-                                >
-                                  OWE (WPA3 Enhanced Open)
-                                </span>
-                              );
-                            }
-
-                            if (ap.security.type === 'OPEN' || ap.security.type === 'WEP') {
-                              return null; // [ESS] is not a cipher: do not show anything as cipher for open networks, and avoid redundant sub-label for WEP
-                            }
-
-                            if (!isWigleDevice && ap.security.cipherLabel) {
-                              if (ap.isWigleOnly && !ap.hasCompleteDetails) {
-                                return null;
-                              }
-                              return (
-                                <span
-                                  className="text-[9px] font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/60 whitespace-nowrap inline-block"
-                                  title={ap.authMode || '[]'}
-                                >
-                                  {ap.security.cipherLabel}
-                                </span>
-                              );
-                            }
-
-                            return null;
+                            return (
+                              <span
+                                className="text-[9.5px] font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700/60 whitespace-nowrap inline-block"
+                                title={ap.authMode || '[]'}
+                              >
+                                {subLabel}
+                              </span>
+                            );
                           })()}
                         </div>
                       </td>

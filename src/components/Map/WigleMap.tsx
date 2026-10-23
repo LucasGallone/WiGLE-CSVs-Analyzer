@@ -41,6 +41,7 @@ import { NetworkHistoryModal } from '../NetworkList/NetworkHistoryModal';
 import { getWigleSignalTier } from '../../utils/wigleSignalColors';
 import { formatToEuropeanDate } from '../../utils/statsUtils';
 import { getBluetoothCategoryInfo } from '../../utils/bluetoothUtils';
+import { getApSubLabel } from '../../utils/csvParser';
 
 export type DrawerSortOption =
   | 'SSID'
@@ -1976,57 +1977,28 @@ export const WigleMap: React.FC<WigleMapProps> = ({
                         )}
                         {(() => {
                           if (ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT') return null;
-                          const rawMode = (ap.authMode || '').toUpperCase();
-                          const isOweTrans =
-                            rawMode.includes('OWE-TRANS') ||
-                            rawMode.includes('OWE_TRANS') ||
-                            rawMode.includes('OWE-TRANSITION') ||
-                            rawMode.includes('OWE_TRANSITION') ||
-                            (rawMode.includes('OWE') && (rawMode.includes('TRANSITION') || rawMode.includes('TRANS'))) ||
-                            ap.security.label.includes('OWE Transition');
-                          const isOwe = rawMode.includes('OWE') || ap.security.label.includes('OWE');
+                          const subLabel = getApSubLabel(ap);
+                          if (!subLabel) return null;
 
-                          if (isOweTrans) {
+                          if (subLabel.startsWith('OWE')) {
                             return (
                               <span
                                 className="px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-100/80 dark:bg-purple-950/90 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-700 shadow-2xs whitespace-nowrap inline-block"
                                 title={ap.authMode || '[]'}
                               >
-                                OWE Transition (WPA3 Enhanced Open)
+                                {subLabel}
                               </span>
                             );
                           }
 
-                          if (isOwe) {
-                            return (
-                              <span
-                                className="px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-100/80 dark:bg-purple-950/90 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-700 shadow-2xs whitespace-nowrap inline-block"
-                                title={ap.authMode || '[]'}
-                              >
-                                OWE (WPA3 Enhanced Open)
-                              </span>
-                            );
-                          }
-
-                          if (ap.security.type === 'OPEN' || ap.security.type === 'WEP') {
-                            return null; // Never display [ESS] as a cipher and avoid redundant WEP sub-label
-                          }
-
-                          if (!isBtMode && !isWigleDevice && ap.security.cipherLabel) {
-                            if (ap.isWigleOnly && !ap.hasCompleteDetails) {
-                              return null;
-                            }
-                            return (
-                              <span
-                                className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 whitespace-nowrap inline-block"
-                                title={ap.authMode || '[]'}
-                              >
-                                {ap.security.cipherLabel}
-                              </span>
-                            );
-                          }
-
-                          return null;
+                          return (
+                            <span
+                              className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 whitespace-nowrap inline-block"
+                              title={ap.authMode || '[]'}
+                            >
+                              {subLabel}
+                            </span>
+                          );
                         })()}
                         {!isBtMode && !(ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT') && hasWps && (!ap.isWigleOnly || ap.hasCompleteDetails) && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60">

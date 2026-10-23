@@ -12,8 +12,11 @@ import {
   mergeScanSessions,
   refreshVendors,
   isWigleModel,
+  getApSubLabel,
+  getApCipherForFilter,
 } from './utils/csvParser';
 import { analyzeNetworkHistory } from './utils/historyUtils';
+import { isBluetoothAuthMode } from './utils/bluetoothUtils';
 import { loadCustomOuiDatabase } from './data/ouiDatabase';
 import { ThemeProvider } from './context/ThemeContext';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
@@ -91,7 +94,8 @@ function AppContent() {
     let wifi = 0;
     let bt = 0;
     session.accessPoints.forEach((ap) => {
-      if (ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined) {
+      const isBt = ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined || ap.isBluetooth || isBluetoothAuthMode(ap.authMode);
+      if (isBt) {
         bt++;
       } else if ((ap.type || '').toUpperCase() === 'WIFI') {
         wifi++;
@@ -190,7 +194,7 @@ function AppContent() {
                   ...prev,
                   fileName: progress.fileName || prev.fileName,
                   rowsParsed: Math.max(prev.rowsParsed, progress.rowsParsed),
-                  uniqueApsCount: Math.max(prev.uniqueApsCount, progress.uniqueApsCount),
+                  uniqueApsCount: progress.uniqueApsCount,
                   percent: 100,
                 };
               }
@@ -262,7 +266,7 @@ function AppContent() {
                 ...prev,
                 fileName: progress.fileName || prev.fileName,
                 rowsParsed: Math.max(prev.rowsParsed, progress.rowsParsed),
-                uniqueApsCount: Math.max(prev.uniqueApsCount, progress.uniqueApsCount),
+                uniqueApsCount: progress.uniqueApsCount,
                 percent: 100,
               };
             }
@@ -328,8 +332,9 @@ function AppContent() {
     if (!session) return [];
     return session.accessPoints.filter((ap) => {
       // 0. Strict Mode Separation
+      const isBt = ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined || ap.isBluetooth || isBluetoothAuthMode(ap.authMode);
       if (analysisMode === 'BT') {
-        if (ap.type !== 'BLE' && ap.type !== 'BT' && ap.btProtocol === undefined) return false;
+        if (!isBt) return false;
 
         // 1. Bluetooth Search query (SSID/Device name, MAC, OUI, Vendor, Company, Category)
         if (filters.searchQuery) {
@@ -428,7 +433,7 @@ function AppContent() {
       }
 
       // WIFI MODE: Seules les lignes avec le type WIFI (non sensible à la casse) devront être affichées en mode WiFi
-      if ((ap.type || '').toUpperCase() !== 'WIFI' || ap.btProtocol !== undefined) return false;
+      if ((ap.type || '').toUpperCase() !== 'WIFI' || isBt) return false;
 
       // 1. Search query (strictly restricted to SSID, BSSID/MAC, OUI)
       if (filters.searchQuery) {
@@ -450,51 +455,14 @@ function AppContent() {
         filters.cipherAlgorithmFilter &&
         filters.cipherAlgorithmFilter !== 'ALL'
       ) {
-        const target = filters.cipherAlgorithmFilter.toUpperCase();
-        const rawAuth = (ap.authMode || '').toUpperCase();
-        const ciphers = (ap.security.ciphers || []).map((c) => c.toUpperCase());
-        const cipherLabel = (ap.security.cipherLabel || '').toUpperCase();
-        const isWpa3Ent192 =
-          rawAuth.includes('SUITE-B') ||
-          rawAuth.includes('EAP/SHA384') ||
-          rawAuth.includes('EAP-SHA384') ||
-          rawAuth.includes('SHA384') ||
-          ap.security.type === 'WPA3_ENTERPRISE';
-
-        let match = false;
-
-        if (target === 'GCMP-256') {
-          match =
-            rawAuth.includes('GCMP-256') ||
-            (isWpa3Ent192 && rawAuth.includes('GCMP')) ||
-            ciphers.some((c) => c.includes('GCMP-256') || c.includes('256')) ||
-            (cipherLabel.includes('GCMP') && (cipherLabel.includes('256') || isWpa3Ent192));
-        } else if (target === 'GCMP-128') {
-          match =
-            (rawAuth.includes('GCMP-128') || (rawAuth.includes('GCMP') && !rawAuth.includes('256') && !isWpa3Ent192)) ||
-            ciphers.some((c) => c.includes('GCMP-128') || (c.includes('GCMP') && !c.includes('256') && !isWpa3Ent192)) ||
-            (cipherLabel.includes('GCMP') && !cipherLabel.includes('256') && !isWpa3Ent192);
-        } else if (target === 'CCMP-256') {
-          match =
-            rawAuth.includes('CCMP-256') ||
-            (rawAuth.includes('CCMP') && rawAuth.includes('256')) ||
-            ciphers.some((c) => c.includes('CCMP-256') || c.includes('256')) ||
-            (cipherLabel.includes('CCMP') && cipherLabel.includes('256'));
-        } else if (target === 'CCMP') {
-          match =
-            (rawAuth.includes('CCMP') && !rawAuth.includes('256')) ||
-            rawAuth.includes('AES') ||
-            ciphers.some((c) => c.includes('CCMP') || c.includes('AES')) ||
-            cipherLabel.includes('CCMP') ||
-            cipherLabel.includes('AES');
-        } else {
-          match =
-            rawAuth.includes(target) ||
-            ciphers.some((c) => c.includes(target)) ||
-            cipherLabel.includes(target);
+        const apCipher = getApCipherForFilter(ap, language);
+        const isNoEncFilter = filters.cipherAlgorithmFilter === 'Aucun chiffrement' || filters.cipherAlgorithmFilter === 'No encryption';
+        if (isNoEncFilter) {
+          const isApNoEnc = apCipher === 'Aucun chiffrement' || apCipher === 'No encryption';
+          if (!isApNoEnc) return false;
+        } else if (apCipher !== filters.cipherAlgorithmFilter) {
+          return false;
         }
-
-        if (!match) return false;
       }
 
       // 3. Channel & Band filter (Unified)
@@ -618,7 +586,8 @@ function AppContent() {
       filters.locationFilter !== null ||
       filters.onlyOpenNetworks ||
       filters.onlyWpa3 ||
-      filters.onlyModifiedNetworks
+      filters.onlyModifiedNetworks ||
+      Boolean(filters.isCipherFilterActive && filters.cipherAlgorithmFilter)
     );
   }, [filters, analysisMode]);
 
@@ -939,7 +908,7 @@ function AppContent() {
 
               <NetworkTable
                 accessPoints={filteredAps}
-                allAccessPoints={analysisMode === 'WIFI' ? session.accessPoints.filter((ap) => (ap.type || '').toUpperCase() === 'WIFI') : session.accessPoints}
+                allAccessPoints={analysisMode === 'WIFI' ? session.accessPoints.filter((ap) => (ap.type || '').toUpperCase() === 'WIFI' && !ap.isBluetooth && ap.btProtocol === undefined && !isBluetoothAuthMode(ap.authMode)) : session.accessPoints}
                 selectedAp={selectedAp}
                 onSelectAp={(ap) => setSelectedAp(ap)}
                 onInspectAp={(ap) => setInspectingAp(ap)}

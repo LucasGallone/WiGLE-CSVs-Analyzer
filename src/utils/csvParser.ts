@@ -13,7 +13,7 @@ import {
 } from '../types/wigle';
 import { resolveVendor } from '../data/ouiDatabase';
 import { analyzeNetworkHistory } from './historyUtils';
-import { resolveBtCategory, resolveBtCompany, getBtAddressType } from './bluetoothUtils';
+import { resolveBtCategory, resolveBtCompany, getBtAddressType, isBluetoothAuthMode } from './bluetoothUtils';
 
 // Global String Interning Cache for high-performance memory deduplication
 const stringPool = new Map<string, string>();
@@ -153,11 +153,18 @@ export function addObservationCompacted(
         existing.isSSIDHidden = !obs.ssid || obs.ssid.length === 0;
       }
       if (obs.authMode !== undefined && obs.authMode !== null && obs.authMode !== '') {
+        if (isBluetoothAuthMode(obs.authMode)) {
+          existing.isBluetooth = true;
+          existing.type = 'BLE';
+          existing.btProtocol = 'BLE';
+        }
         const isObsGenericWigle = obs.isFromWigleFile || (obs.authMode.length <= 8 && !obs.authMode.includes('PSK') && !obs.authMode.includes('EAP') && !obs.authMode.includes('SAE'));
         const hasExistingDetailed = existing.hasCompleteDetails || (!existing.isWigleOnly && (existing.authMode.includes('PSK') || existing.authMode.includes('EAP') || existing.authMode.includes('SAE')));
         if (!hasExistingDetailed || !isObsGenericWigle || obs.authMode.length > existing.authMode.length) {
           existing.authMode = internString(obs.authMode);
-          existing.security = classifySecurity(obs.authMode);
+          if (!existing.isBluetooth && existing.type !== 'BLE' && existing.type !== 'BT') {
+            existing.security = classifySecurity(obs.authMode);
+          }
         }
         if (obs.authMode.toUpperCase().includes('WPS')) {
           existing.hasWps = true;
@@ -1022,6 +1029,101 @@ export function classifySecurity(authMode: string): SecurityCategory {
 }
 
 /**
+ * Returns the exact sub-label displayed beneath the security badge for a given access point.
+ * Examples: 'OWE (WPA3 Enhanced Open)', 'OWE Transition (WPA3 Enhanced Open)', 'AES-CCMP (128-bit) + TKIP (128-bit)', 'Ad-Hoc', etc.
+ */
+export function getApSubLabel(ap: ProcessedAccessPoint): string | null {
+  if (ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT') {
+    return null;
+  }
+  const rawMode = (ap.authMode || '').toUpperCase().trim();
+  const cleanMode = rawMode.replace(/\s+/g, '');
+  const isExclusiveIbss = cleanMode === '[IBSS]';
+
+  const isOweTrans =
+    rawMode.includes('OWE-TRANS') ||
+    rawMode.includes('OWE_TRANS') ||
+    rawMode.includes('OWE-TRANSITION') ||
+    rawMode.includes('OWE_TRANSITION') ||
+    (rawMode.includes('OWE') && (rawMode.includes('TRANSITION') || rawMode.includes('TRANS'))) ||
+    Boolean(ap.security.label && ap.security.label.includes('OWE Transition'));
+  const isOwe = rawMode.includes('OWE') || Boolean(ap.security.label && ap.security.label.includes('OWE'));
+
+  if (isOweTrans) {
+    return 'OWE Transition (WPA3 Enhanced Open)';
+  }
+
+  if (isOwe) {
+    return 'OWE (WPA3 Enhanced Open)';
+  }
+
+  // When indicated exclusively [IBSS] in the CSV: "Ad-Hoc"
+  if (isExclusiveIbss) {
+    return 'Ad-Hoc';
+  }
+
+  if (ap.security.type === 'OPEN' || ap.security.type === 'WEP') {
+    return null;
+  }
+
+  if (ap.security.cipherLabel && ap.security.cipherLabel !== 'None') {
+    return ap.security.cipherLabel;
+  }
+
+  return null;
+}
+
+/**
+ * Returns the cipher algorithm label used exclusively for cipher algorithm filtering.
+ * For unencrypted open networks, returns localized 'Aucun chiffrement' / 'No encryption'
+ * without adding any sub-label to the table rows or map badges (which continue to call getApSubLabel).
+ */
+export function getApCipherForFilter(ap: ProcessedAccessPoint, language: string = 'fr'): string | null {
+  if (ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT' || (ap.type || '').toUpperCase() !== 'WIFI' || isBluetoothAuthMode(ap.authMode)) {
+    return null;
+  }
+  const rawMode = (ap.authMode || '').toUpperCase().trim();
+  const cleanMode = rawMode.replace(/\s+/g, '');
+  const isExclusiveIbss = cleanMode === '[IBSS]';
+
+  const isOweTrans =
+    rawMode.includes('OWE-TRANS') ||
+    rawMode.includes('OWE_TRANS') ||
+    rawMode.includes('OWE-TRANSITION') ||
+    rawMode.includes('OWE_TRANSITION') ||
+    (rawMode.includes('OWE') && (rawMode.includes('TRANSITION') || rawMode.includes('TRANS'))) ||
+    Boolean(ap.security.label && ap.security.label.includes('OWE Transition'));
+  const isOwe = rawMode.includes('OWE') || Boolean(ap.security.label && ap.security.label.includes('OWE'));
+
+  if (isOweTrans) {
+    return 'OWE Transition (WPA3 Enhanced Open)';
+  }
+
+  if (isOwe) {
+    return 'OWE (WPA3 Enhanced Open)';
+  }
+
+  // When indicated exclusively [IBSS] in the CSV: "Ad-Hoc"
+  if (isExclusiveIbss) {
+    return 'Ad-Hoc';
+  }
+
+  if (ap.security.type === 'WEP') {
+    return null;
+  }
+
+  if (ap.security.type === 'OPEN' || !ap.security.isSecure) {
+    return language === 'fr' ? 'Aucun chiffrement' : 'No encryption';
+  }
+
+  if (ap.security.cipherLabel && ap.security.cipherLabel !== 'None') {
+    return ap.security.cipherLabel;
+  }
+
+  return null;
+}
+
+/**
  * Convert WiFi frequency / channel to accurate band (including 6 GHz WiFi 6E/7)
  */
 export function frequencyOrChannelToBand(
@@ -1295,7 +1397,13 @@ export function parseWigleCsvString(
     let detectedType: 'WIFI' | 'BLE' | 'BT' | 'OTHER' = 'OTHER';
 
     if (rawCsvTypeUpper === 'WIFI') {
-      detectedType = 'WIFI';
+      // WiGLE Bug workaround: Some Bluetooth devices are exported with Type="WIFI"
+      // but have a Bluetooth Device Class in AuthMode (e.g. "Misc", "Display", etc.)
+      if (isBluetoothAuthMode(authMode)) {
+        detectedType = 'BLE';
+      } else {
+        detectedType = 'WIFI';
+      }
     } else if (rawCsvTypeUpper === 'BLE' || rawCsvTypeUpper === 'BTLE') {
       detectedType = 'BLE';
     } else if (rawCsvTypeUpper === 'BT' || rawCsvTypeUpper === 'BLUETOOTH') {
@@ -1315,13 +1423,8 @@ export function parseWigleCsvString(
 
       // Fallback detection for Bluetooth if type column is absent or ambiguous (Bluetooth mode untouched)
       if (detectedType === 'OTHER') {
-        const authUpper = authMode.toUpperCase();
         if (
-          authUpper.includes('MISC') ||
-          authUpper.includes('UNCATEGORIZED') ||
-          authUpper.includes('KEYBOARD') ||
-          authUpper.includes('HEADPHONE') ||
-          authUpper.includes('CAR AUDIO') ||
+          isBluetoothAuthMode(authMode) ||
           freqNum === 7936 ||
           freqNum === 1344 ||
           freqNum === 1028 ||
@@ -1402,8 +1505,12 @@ export function parseWigleCsvString(
       if (!existing.sourceFiles.includes(fileName)) {
         existing.sourceFiles.push(fileName);
       }
-      if (type.toUpperCase() === 'WIFI' && (existing.type || '').toUpperCase() !== 'WIFI') {
+      if (type.toUpperCase() === 'WIFI' && !isBluetooth && (existing.type || '').toUpperCase() !== 'WIFI' && !existing.isBluetooth) {
         existing.type = 'WIFI';
+      } else if (isBluetooth && (existing.type || '').toUpperCase() !== 'BLE' && (existing.type || '').toUpperCase() !== 'BT') {
+        existing.type = type;
+        existing.btProtocol = type as 'BLE' | 'BT';
+        existing.isBluetooth = true;
       }
 
       // Best RSSI selection
@@ -1521,6 +1628,7 @@ export function parseWigleCsvString(
         btProtocol: isBluetooth ? (type as 'BLE' | 'BT') : undefined,
         btColor: btCat?.color,
         btIconName: btCat?.iconName,
+        isBluetooth: isBluetooth || undefined,
       };
 
       apMap.set(mac, ap);
@@ -1737,7 +1845,13 @@ export async function parseWigleCsvFileStreaming(
           let detectedType: 'WIFI' | 'BLE' | 'BT' | 'OTHER' = 'OTHER';
 
           if (rawCsvTypeUpper === 'WIFI') {
-            detectedType = 'WIFI';
+            // WiGLE Bug workaround: Some Bluetooth devices are exported with Type="WIFI"
+            // but have a Bluetooth Device Class in AuthMode (e.g. "Misc", "Display", etc.)
+            if (isBluetoothAuthMode(authMode)) {
+              detectedType = 'BLE';
+            } else {
+              detectedType = 'WIFI';
+            }
           } else if (rawCsvTypeUpper === 'BLE' || rawCsvTypeUpper === 'BTLE') {
             detectedType = 'BLE';
           } else if (rawCsvTypeUpper === 'BT' || rawCsvTypeUpper === 'BLUETOOTH') {
@@ -1757,13 +1871,8 @@ export async function parseWigleCsvFileStreaming(
 
             // Fallback detection for Bluetooth if type column is absent or ambiguous (Bluetooth mode untouched)
             if (detectedType === 'OTHER') {
-              const authUpper = authMode.toUpperCase();
               if (
-                authUpper.includes('MISC') ||
-                authUpper.includes('UNCATEGORIZED') ||
-                authUpper.includes('KEYBOARD') ||
-                authUpper.includes('HEADPHONE') ||
-                authUpper.includes('CAR AUDIO') ||
+                isBluetoothAuthMode(authMode) ||
                 freqNum === 7936 ||
                 freqNum === 1344 ||
                 freqNum === 1028 ||
@@ -1836,11 +1945,12 @@ export async function parseWigleCsvFileStreaming(
           const existing = apMap.get(mac);
           if (existing) {
             addObservationCompacted(existing, observation, fileName);
-            if (type.toUpperCase() === 'WIFI' && (existing.type || '').toUpperCase() !== 'WIFI') {
+            if (type.toUpperCase() === 'WIFI' && !isBluetooth && (existing.type || '').toUpperCase() !== 'WIFI' && !existing.isBluetooth) {
               existing.type = 'WIFI';
             } else if (isBluetooth && (existing.type || '').toUpperCase() !== 'BLE' && (existing.type || '').toUpperCase() !== 'BT') {
               existing.type = type;
               existing.btProtocol = type as 'BLE' | 'BT';
+              existing.isBluetooth = true;
             }
           } else {
             const { vendor, oui } = resolveVendor(mac, customOuiMap);
@@ -1905,6 +2015,7 @@ export async function parseWigleCsvFileStreaming(
               btProtocol: isBluetooth ? (type as 'BLE' | 'BT') : undefined,
               btColor: btCat?.color,
               btIconName: btCat?.iconName,
+              isBluetooth: isBluetooth || undefined,
             };
 
             ap.observations.push(compactObs(ap, observation));
@@ -1926,8 +2037,8 @@ export async function parseWigleCsvFileStreaming(
             }
             const isBtMode = (analysisMode || '').toUpperCase() === 'BT';
             const filteredApCount = isBtMode
-              ? Array.from(apMap.values()).filter(ap => ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined).length
-              : Array.from(apMap.values()).filter(ap => (ap.type || '').toUpperCase() === 'WIFI').length;
+              ? Array.from(apMap.values()).filter(ap => ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined || ap.isBluetooth || isBluetoothAuthMode(ap.authMode)).length
+              : Array.from(apMap.values()).filter(ap => (ap.type || '').toUpperCase() === 'WIFI' && !ap.isBluetooth && ap.btProtocol === undefined && !isBluetoothAuthMode(ap.authMode)).length;
 
             onProgress({
               fileName,
@@ -1944,11 +2055,12 @@ export async function parseWigleCsvFileStreaming(
       },
       complete: async () => {
         header.totalRows = rowsParsed;
+        synchronizeLatestApObservations(apMap);
         if (onProgress) {
           const isBtMode = (analysisMode || '').toUpperCase() === 'BT';
           const finalFilteredApCount = isBtMode
-            ? Array.from(apMap.values()).filter(ap => ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined).length
-            : Array.from(apMap.values()).filter(ap => (ap.type || '').toUpperCase() === 'WIFI').length;
+            ? Array.from(apMap.values()).filter(ap => ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined || ap.isBluetooth || isBluetoothAuthMode(ap.authMode)).length
+            : Array.from(apMap.values()).filter(ap => (ap.type || '').toUpperCase() === 'WIFI' && !ap.isBluetooth && ap.btProtocol === undefined && !isBluetoothAuthMode(ap.authMode)).length;
 
           onProgress({
             fileName,
@@ -1958,7 +2070,6 @@ export async function parseWigleCsvFileStreaming(
           });
           await new Promise((r) => setTimeout(r, 20));
         }
-        synchronizeLatestApObservations(apMap);
         resolve({
           header,
           rawRecords,
@@ -2028,7 +2139,7 @@ export function synchronizeLatestApObservations(apMap: Map<string, ProcessedAcce
       const completeObs = sortedObs.filter((o) => !o.isFromWigleFile);
       if (completeObs.length > 0) {
         const latestComplete = completeObs[completeObs.length - 1];
-        if (latestComplete.authMode) {
+        if (latestComplete.authMode && !ap.isBluetooth && ap.type !== 'BLE' && ap.type !== 'BT') {
           ap.authMode = latestComplete.authMode;
           ap.security = classifySecurity(latestComplete.authMode);
         }
@@ -2046,12 +2157,41 @@ export function synchronizeLatestApObservations(apMap: Map<string, ProcessedAcce
         ap.isWigleOnly = false;
       } else {
         // WiGLE only AP
-        if (latestObs && latestObs.authMode) {
+        if (latestObs && latestObs.authMode && !ap.isBluetooth && ap.type !== 'BLE' && ap.type !== 'BT') {
           ap.authMode = latestObs.authMode;
           ap.security = classifySecurity(latestObs.authMode);
         }
         ap.hasCompleteDetails = false;
         ap.isWigleOnly = true;
+      }
+
+      // Consolidate mislabeled Bluetooth devices
+      if (isBluetoothAuthMode(ap.authMode) || ap.isBluetooth || ap.type === 'BLE' || ap.type === 'BT') {
+        ap.isBluetooth = true;
+        ap.type = ap.type === 'BT' ? 'BT' : 'BLE';
+        ap.btProtocol = ap.type === 'BT' ? 'BT' : 'BLE';
+        const btCat = resolveBtCategory(ap.authMode, ap.frequency);
+        const btAddr = getBtAddressType(ap.mac);
+        const btCompany = resolveBtCompany(ap.mfgId);
+        ap.btCategory = btCat ? internString(btCat.nameEn) : undefined;
+        ap.btCategoryFr = btCat ? internString(btCat.nameFr) : undefined;
+        ap.btCategoryEn = btCat ? internString(btCat.nameEn) : undefined;
+        ap.btCategoryGroup = btCat ? internString(btCat.group) : undefined;
+        ap.btCompany = btCompany ? internString(btCompany) : undefined;
+        ap.btAddressType = btAddr ? internString(btAddr.type) : undefined;
+        ap.btAddressTypeFr = btAddr ? internString(btAddr.labelFr) : undefined;
+        ap.btAddressTypeEn = btAddr ? internString(btAddr.labelEn) : undefined;
+        ap.btColor = btCat?.color;
+        ap.btIconName = btCat?.iconName;
+        ap.security = {
+          type: 'UNKNOWN',
+          label: btCat?.nameEn || 'Bluetooth',
+          color: btCat?.color || '#3b82f6',
+          isSecure: false,
+          ciphers: [],
+          protocols: [ap.type],
+          details: btCat?.nameEn || 'Bluetooth',
+        };
       }
 
       // Pre-compute "Modified" status (Suggestion 4)
@@ -2137,11 +2277,11 @@ export function mergeScanSessions(
 ): ScanSessionData {
   const newIsWigle = isWigleModel(newHeader);
   const validNewRaw = newRawRecords.filter((r) => {
-    const t = (r.type || '').trim().toUpperCase();
+    const isBt = r.type === 'BLE' || r.type === 'BT' || isBluetoothAuthMode(r.authMode);
     if (analysisMode === 'WIFI') {
-      return t === 'WIFI';
+      return !isBt && (r.type || '').trim().toUpperCase() === 'WIFI';
     } else {
-      return t === 'BLE' || t === 'BT';
+      return isBt;
     }
   });
 
@@ -2369,10 +2509,13 @@ export function mergeScanSessions(
         : (newIsWigle ? 'Unknown' : frequencyOrChannelToBand(record.frequency, record.channel));
       const security = classifySecurity(record.authMode);
 
+      const isMislabeledBt = (record.type || '').trim().toUpperCase() === 'WIFI' && isBluetoothAuthMode(record.authMode);
+      const isBtRecord = analysisMode === 'BT' || record.type === 'BLE' || record.type === 'BT' || isMislabeledBt;
+
       let btCat;
       let btAddr;
       let btCompany = '';
-      if (analysisMode === 'BT') {
+      if (isBtRecord) {
         btCat = resolveBtCategory(record.authMode, record.frequency);
         btAddr = getBtAddressType(mac);
         btCompany = resolveBtCompany(record.mfgId);
@@ -2386,13 +2529,13 @@ export function mergeScanSessions(
         isSSIDHidden: !record.ssid || record.ssid.length === 0,
         hasWps: (record.authMode || '').toUpperCase().includes('WPS'),
         authMode: internString(record.authMode),
-        security: analysisMode === 'BT' ? {
+        security: isBtRecord ? {
           type: 'UNKNOWN',
           label: btCat?.nameEn || 'Bluetooth',
           color: btCat?.color || '#3b82f6',
           isSecure: false,
           ciphers: [],
-          protocols: [record.type || 'BLE'],
+          protocols: [record.type === 'BT' ? 'BT' : 'BLE'],
           details: btCat?.nameEn || 'Bluetooth',
         } : security,
         channel: hasChannel ? internString(record.channel) : (newIsWigle ? '' : internString(record.channel)),
@@ -2408,7 +2551,7 @@ export function mergeScanSessions(
         accuracyMeters: record.accuracyMeters,
         rcois: internString(record.rcois),
         mfgId: internString(record.mfgId),
-        type: internString((record.type || '').trim().toUpperCase() === 'WIFI' ? 'WIFI' : record.type),
+        type: internString(isBtRecord ? (record.type === 'BT' ? 'BT' : 'BLE') : ((record.type || '').trim().toUpperCase() === 'WIFI' ? 'WIFI' : record.type)),
         observationCount: 1,
         observations: [observation],
         sourceFiles: record.sourceFile ? [internString(record.sourceFile)] : [internString(distinctFileName)],
@@ -2423,9 +2566,10 @@ export function mergeScanSessions(
         btAddressType: btAddr ? internString(btAddr.type) : undefined,
         btAddressTypeFr: btAddr ? internString(btAddr.labelFr) : undefined,
         btAddressTypeEn: btAddr ? internString(btAddr.labelEn) : undefined,
-        btProtocol: analysisMode === 'BT' ? ((record.type === 'BT' ? 'BT' : 'BLE') as 'BLE' | 'BT') : undefined,
+        btProtocol: isBtRecord ? ((record.type === 'BT' ? 'BT' : 'BLE') as 'BLE' | 'BT') : undefined,
         btColor: btCat?.color,
         btIconName: btCat?.iconName,
+        isBluetooth: isBtRecord || undefined,
       };
 
       apMap.set(mac, ap);

@@ -230,6 +230,102 @@ export function resolveBtCategory(
 }
 
 /**
+ * Checks whether an authMode string indicates a Bluetooth device characteristic or class
+ * (e.g. "Misc", "Display", "Headphones", "Car Audio", etc.), handling the WiGLE CSV generator
+ * bug where Bluetooth devices are erroneously exported with Type="WIFI".
+ */
+export function isBluetoothAuthMode(authMode: string | undefined | null): boolean {
+  if (!authMode) return false;
+  const cleanAuth = authMode.trim();
+  if (!cleanAuth) return false;
+
+  const upper = cleanAuth.toUpperCase();
+
+  // Exclude authentic Wi-Fi encryption and capability tokens
+  if (
+    upper === 'OPEN' ||
+    upper === 'NONE' ||
+    upper === '[]' ||
+    upper === '[ESS]' ||
+    upper === '[IBSS]' ||
+    upper.includes('[ESS]') ||
+    upper.includes('[IBSS]') ||
+    upper.includes('WPA') ||
+    upper.includes('WEP') ||
+    upper.includes('RSN') ||
+    upper.includes('PSK') ||
+    upper.includes('EAP') ||
+    upper.includes('SAE') ||
+    upper.includes('OWE') ||
+    upper.includes('WPS') ||
+    upper.includes('TKIP') ||
+    upper.includes('CCMP') ||
+    upper.includes('GCMP')
+  ) {
+    return false;
+  }
+
+  // 1. Direct match on known categories in authMode (e.g. "Misc", "Display", "Misc;10", "Keyboard", "Car Audio")
+  const prefix = cleanAuth.split(';')[0].trim();
+  for (const key of Object.keys(BT_CATEGORY_MAP)) {
+    if (
+      cleanAuth === key ||
+      prefix === key ||
+      cleanAuth.toLowerCase() === key.toLowerCase() ||
+      prefix.toLowerCase() === key.toLowerCase()
+    ) {
+      return true;
+    }
+  }
+
+  // Check legend keys from WiGLE BluetoothReceiver
+  for (const typeName of Object.values(BT_DEVICE_TYPE_LEGEND)) {
+    if (
+      cleanAuth === typeName ||
+      prefix === typeName ||
+      cleanAuth.toLowerCase() === typeName.toLowerCase() ||
+      prefix.toLowerCase() === typeName.toLowerCase()
+    ) {
+      return true;
+    }
+  }
+
+  // Numeric device class code (e.g., "7936", "1344", "1028", "524", "1084", "0")
+  const num = parseInt(prefix, 10);
+  if (!isNaN(num) && BT_DEVICE_TYPE_LEGEND[num] !== undefined) {
+    return true;
+  }
+
+  // Substring matches for prominent Bluetooth device categories
+  if (
+    upper.includes('MISC') ||
+    upper.includes('DISPLAY') ||
+    upper.includes('HEADPHONE') ||
+    upper.includes('EARBUD') ||
+    upper.includes('AIRPOD') ||
+    upper.includes('CAR AUDIO') ||
+    upper.includes('CAR_AUDIO') ||
+    upper.includes('SPEAKER') ||
+    upper.includes('HANDSFREE') ||
+    upper.includes('HIFI') ||
+    upper.includes('SMARTPHONE') ||
+    upper.includes('CELLPHONE') ||
+    upper.includes('KEYBOARD') ||
+    upper.includes('POINTER') ||
+    upper.includes('WATCH') ||
+    upper.includes('WEARABLE') ||
+    upper.includes('PULSE') ||
+    upper.includes('GLUCOSE') ||
+    upper.includes('CONTROLLER') ||
+    upper.includes('UNCATEGORIZED')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Analyzes BD_ADDR to determine Public vs Random / Private address type
  * according to Bluetooth Core Specification Vol 6 Part B Sec 1.3.2.
  */

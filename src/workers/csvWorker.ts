@@ -12,7 +12,7 @@ import {
   compactObs,
   synchronizeLatestApObservations,
 } from '../utils/csvParser';
-import { resolveBtCategory, resolveBtCompany, getBtAddressType } from '../utils/bluetoothUtils';
+import { resolveBtCategory, resolveBtCompany, getBtAddressType, isBluetoothAuthMode } from '../utils/bluetoothUtils';
 import { ProcessedAccessPoint, AccessPointObservation, WigleCsvHeader, WifiBand, AnalysisMode } from '../types/wigle';
 
 self.onmessage = async (e: MessageEvent) => {
@@ -141,7 +141,13 @@ self.onmessage = async (e: MessageEvent) => {
           let detectedType: 'WIFI' | 'BLE' | 'BT' | 'OTHER' = 'OTHER';
 
           if (rawCsvTypeUpper === 'WIFI') {
-            detectedType = 'WIFI';
+            // WiGLE Bug workaround: Some Bluetooth devices are exported with Type="WIFI"
+            // but have a Bluetooth Device Class in AuthMode (e.g. "Misc", "Display", etc.)
+            if (isBluetoothAuthMode(authMode)) {
+              detectedType = 'BLE';
+            } else {
+              detectedType = 'WIFI';
+            }
           } else if (rawCsvTypeUpper === 'BLE' || rawCsvTypeUpper === 'BTLE') {
             detectedType = 'BLE';
           } else if (rawCsvTypeUpper === 'BT' || rawCsvTypeUpper === 'BLUETOOTH') {
@@ -161,13 +167,8 @@ self.onmessage = async (e: MessageEvent) => {
 
             // Fallback detection for Bluetooth if type column is absent or ambiguous (Bluetooth mode untouched)
             if (detectedType === 'OTHER') {
-              const authUpper = authMode.toUpperCase();
               if (
-                authUpper.includes('MISC') ||
-                authUpper.includes('UNCATEGORIZED') ||
-                authUpper.includes('KEYBOARD') ||
-                authUpper.includes('HEADPHONE') ||
-                authUpper.includes('CAR AUDIO') ||
+                isBluetoothAuthMode(authMode) ||
                 freqNum === 7936 ||
                 freqNum === 1344 ||
                 freqNum === 1028 ||
@@ -224,11 +225,12 @@ self.onmessage = async (e: MessageEvent) => {
           const existing = apMap.get(mac);
           if (existing) {
             addObservationCompacted(existing, observation, fileName);
-            if (type.toUpperCase() === 'WIFI' && (existing.type || '').toUpperCase() !== 'WIFI') {
+            if (type.toUpperCase() === 'WIFI' && !isBluetooth && (existing.type || '').toUpperCase() !== 'WIFI' && !existing.isBluetooth) {
               existing.type = 'WIFI';
             } else if (isBluetooth && (existing.type || '').toUpperCase() !== 'BLE' && (existing.type || '').toUpperCase() !== 'BT') {
               existing.type = type;
               existing.btProtocol = type as 'BLE' | 'BT';
+              existing.isBluetooth = true;
             }
           } else {
             const { vendor, oui } = resolveVendor(mac, customOuiMap);
@@ -293,6 +295,7 @@ self.onmessage = async (e: MessageEvent) => {
               btProtocol: isBluetooth ? (type as 'BLE' | 'BT') : undefined,
               btColor: btCat?.color,
               btIconName: btCat?.iconName,
+              isBluetooth: isBluetooth || undefined,
             };
 
             ap.observations.push(compactObs(ap, observation));
@@ -312,8 +315,8 @@ self.onmessage = async (e: MessageEvent) => {
           }
           const isBtMode = (analysisMode || '').toUpperCase() === 'BT';
           const filteredApCount = isBtMode
-            ? Array.from(apMap.values()).filter(ap => ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined).length
-            : Array.from(apMap.values()).filter(ap => (ap.type || '').toUpperCase() === 'WIFI').length;
+            ? Array.from(apMap.values()).filter(ap => ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined || ap.isBluetooth || isBluetoothAuthMode(ap.authMode)).length
+            : Array.from(apMap.values()).filter(ap => (ap.type || '').toUpperCase() === 'WIFI' && !ap.isBluetooth && ap.btProtocol === undefined && !isBluetoothAuthMode(ap.authMode)).length;
 
           self.postMessage({
             type: 'PROGRESS',
@@ -326,10 +329,12 @@ self.onmessage = async (e: MessageEvent) => {
       },
       complete: () => {
         header.totalRows = totalRowsCount;
+        synchronizeLatestApObservations(apMap);
+
         const isBtMode = (analysisMode || '').toUpperCase() === 'BT';
         const finalFilteredApCount = isBtMode
-          ? Array.from(apMap.values()).filter(ap => ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined).length
-          : Array.from(apMap.values()).filter(ap => (ap.type || '').toUpperCase() === 'WIFI').length;
+          ? Array.from(apMap.values()).filter(ap => ap.type === 'BLE' || ap.type === 'BT' || ap.btProtocol !== undefined || ap.isBluetooth || isBluetoothAuthMode(ap.authMode)).length
+          : Array.from(apMap.values()).filter(ap => (ap.type || '').toUpperCase() === 'WIFI' && !ap.isBluetooth && ap.btProtocol === undefined && !isBluetoothAuthMode(ap.authMode)).length;
 
         self.postMessage({
           type: 'PROGRESS',
@@ -338,7 +343,6 @@ self.onmessage = async (e: MessageEvent) => {
           uniqueApsCount: finalFilteredApCount,
           percent: 100,
         });
-        synchronizeLatestApObservations(apMap);
 
         const allAps = Array.from(apMap.values());
         const CHUNK_SIZE = 5000;
