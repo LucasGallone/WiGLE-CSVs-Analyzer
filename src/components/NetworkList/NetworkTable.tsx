@@ -38,9 +38,11 @@ import {
   Tag,
   Cpu,
   ArrowLeftRight,
+  Check,
+  X,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
-import { analyzeNetworkHistory, parseTimestampToMs, extractDateKey, getDayBestRssi, getApObservedChannelsInfo } from '../../utils/historyUtils';
+import { analyzeNetworkHistory, parseTimestampToMs, extractDateKey, getDayBestRssi, getDatesBestRssi, getApObservedChannelsInfo } from '../../utils/historyUtils';
 import { classifySecurity, getApSubLabel, getApCipherForFilter } from '../../utils/csvParser';
 import { NetworkHistoryModal } from './NetworkHistoryModal';
 import { getWigleSignalTier } from '../../utils/wigleSignalColors';
@@ -60,6 +62,7 @@ interface StaticFiltersCache {
     total6: number;
   };
   availableDates: string[];
+  dateCounts: Record<string, number>;
   vendorData: {
     hasUnassignedVendor: boolean;
     unassignedCount: number;
@@ -89,6 +92,312 @@ const TruncatedSsid: React.FC<{ ssid: string }> = ({ ssid }) => {
     >
       {ssid}
     </span>
+  );
+};
+
+interface DateMultiSelectDropdownProps {
+  availableDates: string[];
+  dateCounts: Record<string, number>;
+  selectedDates?: string[];
+  dateFilter?: string;
+  onUpdateFilters: (updater: (prev: FilterState) => FilterState) => void;
+  onResetPage: () => void;
+  language: string;
+  analysisMode?: AnalysisMode;
+}
+
+const DateMultiSelectDropdown: React.FC<DateMultiSelectDropdownProps> = ({
+  availableDates,
+  dateCounts,
+  selectedDates,
+  dateFilter,
+  onUpdateFilters,
+  onResetPage,
+  language,
+  analysisMode = 'WIFI',
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  // Special sentinel for when user explicitly unchecks all dates or clicks "None"
+  const isNoneSelected = Boolean(selectedDates && selectedDates.length === 1 && selectedDates[0] === '__NONE__');
+
+  // All dates are selected by default if selectedDates is empty / undefined or matches total available dates (and dateFilter is 'ALL')
+  const isAllSelected =
+    !isNoneSelected &&
+    (!selectedDates || selectedDates.length === 0 || selectedDates.length === availableDates.length) &&
+    (!dateFilter || dateFilter === 'ALL');
+
+  // Currently active dates
+  const activeDates = useMemo(() => {
+    if (isNoneSelected) return [];
+    if (isAllSelected) return availableDates;
+    if (selectedDates && selectedDates.length > 0) return selectedDates.filter((d) => d !== '__NONE__');
+    if (dateFilter && dateFilter !== 'ALL') return [dateFilter];
+    return availableDates;
+  }, [isNoneSelected, isAllSelected, selectedDates, dateFilter, availableDates]);
+
+  // hasFilter is true only when a specific subset or none is selected
+  const hasFilter = !isAllSelected;
+
+  // Search filter for dates list
+  const filteredDates = useMemo(() => {
+    if (!searchQuery.trim()) return availableDates;
+    const q = searchQuery.toLowerCase().trim();
+    return availableDates.filter((date) => {
+      const euro = formatToEuropeanDate(date).toLowerCase();
+      return date.toLowerCase().includes(q) || euro.includes(q);
+    });
+  }, [availableDates, searchQuery]);
+
+  // Toggling a date in the multi-selection
+  const handleToggleDate = (date: string) => {
+    let next: string[];
+    if (isAllSelected) {
+      // Uncheck this single date from all selected dates
+      next = availableDates.filter((d) => d !== date);
+    } else if (isNoneSelected) {
+      // Check this single date
+      next = [date];
+    } else if (activeDates.includes(date)) {
+      // Uncheck this date
+      next = activeDates.filter((d) => d !== date);
+      if (next.length === 0) {
+        next = ['__NONE__'];
+      }
+    } else {
+      // Check this date
+      next = [...activeDates, date];
+      if (next.length >= availableDates.length) {
+        next = [];
+      }
+    }
+
+    onUpdateFilters((prev) => ({
+      ...prev,
+      selectedDates: next,
+      dateFilter: next.length === 1 && next[0] !== '__NONE__' ? next[0] : 'ALL',
+    }));
+    onResetPage();
+  };
+
+  // Select all dates
+  const handleSelectAll = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    onUpdateFilters((prev) => ({
+      ...prev,
+      selectedDates: [],
+      dateFilter: 'ALL',
+    }));
+    onResetPage();
+  };
+
+  // Clear to none
+  const handleClearToNone = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    onUpdateFilters((prev) => ({
+      ...prev,
+      selectedDates: ['__NONE__'],
+      dateFilter: 'ALL',
+    }));
+    onResetPage();
+  };
+
+  // Trigger button label
+  let buttonLabel = '';
+  if (isAllSelected) {
+    buttonLabel =
+      language === 'fr'
+        ? `Toutes les dates (${availableDates.length > 0 ? availableDates.length : '1'})`
+        : `All Dates (${availableDates.length > 0 ? availableDates.length : '1'})`;
+  } else if (isNoneSelected) {
+    buttonLabel = language === 'fr' ? 'Aucune date sélectionnée' : 'No date selected';
+  } else if (activeDates.length === 1) {
+    buttonLabel = formatToEuropeanDate(activeDates[0]);
+  } else {
+    buttonLabel =
+      language === 'fr'
+        ? `${activeDates.length} dates sélectionnées`
+        : `${activeDates.length} dates selected`;
+  }
+
+  return (
+    <div className={`relative ${isOpen ? 'z-50' : 'z-20'}`} ref={dropdownRef}>
+      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
+        <span className="flex items-center gap-1">
+          <Calendar className="w-3.5 h-3.5 text-teal-500" />
+          <span>{language === 'fr' ? 'Filtrer par date\u00A0:' : 'Filter by date:'}</span>
+        </span>
+        {hasFilter && (
+          <button
+            type="button"
+            onClick={handleSelectAll}
+            className="text-[10.5px] font-medium text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-0.5 cursor-pointer"
+          >
+            <RotateCcw className="w-2.5 h-2.5" />
+            <span>{language === 'fr' ? 'Réinitialiser' : 'Reset'}</span>
+          </button>
+        )}
+      </label>
+
+      {/* Trigger Button */}
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full flex items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium font-sans cursor-pointer transition-all border shadow-2xs select-none ${
+          hasFilter
+            ? 'bg-teal-50/70 dark:bg-teal-950/40 border-teal-500/70 dark:border-teal-500/70 text-teal-900 dark:text-teal-200'
+            : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-600'
+        }`}
+      >
+        <div className="flex items-center gap-1.5 min-w-0 truncate">
+          <span className="truncate">{buttonLabel}</span>
+          {!isAllSelected && !isNoneSelected && activeDates.length > 1 && (
+            <span className="shrink-0 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-teal-600 text-white">
+              {activeDates.length}/{availableDates.length}
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          {hasFilter && (
+            <span
+              onClick={handleSelectAll}
+              title={language === 'fr' ? 'Effacer le filtre de date' : 'Clear date filter'}
+              className="p-0.5 rounded hover:bg-teal-200/60 dark:hover:bg-teal-900/60 text-teal-700 dark:text-teal-300 cursor-pointer transition-colors"
+            >
+              <X className="w-3 h-3 stroke-[2.5]" />
+            </span>
+          )}
+          <ChevronDown
+            className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
+              isOpen ? 'rotate-180 text-teal-600 dark:text-teal-400' : ''
+            }`}
+          />
+        </div>
+      </div>
+
+      {/* Popover Dropdown */}
+      {isOpen && (
+        <div className="absolute z-[100] left-0 right-0 sm:right-auto sm:w-84 mt-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-2.5 flex flex-col gap-2 animate-in fade-in zoom-in-95 duration-100">
+          {/* Header with Quick Actions */}
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2 px-1">
+            <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+              <Calendar className="w-3.5 h-3.5 text-teal-500" />
+              <span>{language === 'fr' ? 'Sélection multiple' : 'Multi-date selection'}</span>
+              <span className="text-[10px] font-medium text-slate-400">({availableDates.length})</span>
+            </span>
+
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={handleSelectAll}
+                className="text-[10.5px] px-2 py-0.5 rounded font-medium text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 hover:bg-teal-100 dark:hover:bg-teal-900 border border-teal-200 dark:border-teal-800 transition-colors"
+              >
+                {language === 'fr' ? 'Toutes' : 'All'}
+              </button>
+              <button
+                type="button"
+                onClick={handleClearToNone}
+                className="text-[10.5px] px-2 py-0.5 rounded font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                {language === 'fr' ? 'Aucune' : 'None'}
+              </button>
+            </div>
+          </div>
+
+          {/* Search filter if > 5 dates */}
+          {availableDates.length > 5 && (
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={language === 'fr' ? 'Filtrer les dates...' : 'Filter dates...'}
+                className="w-full pl-8 pr-2.5 py-1 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-teal-500 font-sans"
+              />
+            </div>
+          )}
+
+          {/* Dates list with individual checkboxes */}
+          <div className="max-h-56 overflow-y-auto space-y-1 pr-0.5">
+            {filteredDates.length === 0 ? (
+              <div className="py-3 text-center text-xs text-slate-400 dark:text-slate-500">
+                {language === 'fr' ? 'Aucune date correspondante' : 'No matching date'}
+              </div>
+            ) : (
+              filteredDates.map((date) => {
+                const isSelected = isAllSelected || (!isNoneSelected && activeDates.includes(date));
+                const count = dateCounts[date] || 0;
+                return (
+                  <div
+                    key={date}
+                    onClick={() => handleToggleDate(date)}
+                    className={`group flex items-center justify-between px-2 py-1.5 rounded-lg cursor-pointer transition-colors text-xs select-none ${
+                      isSelected
+                        ? 'bg-teal-50 dark:bg-teal-950/50 text-teal-900 dark:text-teal-200 font-semibold'
+                        : 'hover:bg-slate-100 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div
+                        className={`w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0 ${
+                          isSelected
+                            ? 'bg-teal-600 border-teal-600 text-white'
+                            : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800'
+                        }`}
+                      >
+                        {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                      </div>
+                      <span className="truncate font-sans">{formatToEuropeanDate(date)}</span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-sans">
+                        {count.toLocaleString()} {analysisMode === 'BT' ? (language === 'fr' ? 'pér.' : 'dev.') : (language === 'fr' ? 'Réseaux' : 'APs')}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Footer with summary and close button */}
+          <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-2 px-1">
+            <span className="text-[10.5px] text-slate-500 dark:text-slate-400 font-sans">
+              {isAllSelected
+                ? (language === 'fr' ? 'Sélection : Toutes les dates' : 'Selection: All dates')
+                : isNoneSelected
+                ? (language === 'fr' ? 'Aucune date sélectionnée' : 'No date selected')
+                : (language === 'fr'
+                    ? `Sélection : ${activeDates.length} date${activeDates.length > 1 ? 's' : ''}`
+                    : `Selection: ${activeDates.length} date${activeDates.length > 1 ? 's' : ''}`)}
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="text-xs px-2.5 py-1 rounded-lg font-semibold bg-teal-600 hover:bg-teal-700 text-white transition-colors cursor-pointer"
+            >
+              {language === 'fr' ? 'Fermer' : 'Close'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -228,13 +537,14 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
   };
 
   // Unified single-pass memoized static filters (Channels, Dates, Vendors, OUIs)
-  const { channelOptions, availableDates, hasUnassignedVendor, unassignedCount, namedVendorsWithCount, availableOuisWithCount } = useMemo(() => {
+  const { channelOptions, availableDates, dateCounts, hasUnassignedVendor, unassignedCount, namedVendorsWithCount, availableOuisWithCount } = useMemo(() => {
     let cached = staticFiltersCache.get(sessionAps);
     if (!cached) {
       const map24 = new Map<string, { ch: string; freq: number; count: number }>();
       const map5 = new Map<string, { ch: string; freq: number; count: number }>();
       const map6 = new Map<string, { ch: string; freq: number; count: number }>();
       const dateSet = new Set<string>();
+      const dateCounts: Record<string, number> = {};
       const vendorMap = new Map<string, number>();
       let unassigned = 0;
       const ouiMap = new Map<string, { count: number; vendor: string }>();
@@ -269,12 +579,17 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
         }
 
         // 2. Dates
+        const apSeenDates = new Set<string>();
         const dKey = extractDateKey(ap.firstSeen);
-        if (dKey) dateSet.add(dKey);
+        if (dKey) apSeenDates.add(dKey);
         for (let j = 0; j < ap.observations.length; j++) {
           const oKey = extractDateKey(ap.observations[j].timestamp);
-          if (oKey) dateSet.add(oKey);
+          if (oKey) apSeenDates.add(oKey);
         }
+        apSeenDates.forEach((d) => {
+          dateSet.add(d);
+          dateCounts[d] = (dateCounts[d] || 0) + 1;
+        });
 
         // 3. Vendors
         if (!ap.vendor || ap.vendor === '[Unassigned by IEEE]' || ap.vendor === 'Unknown') {
@@ -327,6 +642,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
           total6: band6.reduce((acc, v) => acc + v.count, 0),
         },
         availableDates: Array.from(dateSet).sort(),
+        dateCounts,
         vendorData: {
           hasUnassignedVendor: unassigned > 0,
           unassignedCount: unassigned,
@@ -340,6 +656,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
     return {
       channelOptions: cached.channelOptions,
       availableDates: cached.availableDates,
+      dateCounts: cached.dateCounts,
       hasUnassignedVendor: cached.vendorData.hasUnassignedVendor,
       unassignedCount: cached.vendorData.unassignedCount,
       namedVendorsWithCount: cached.vendorData.namedVendorsWithCount,
@@ -530,11 +847,22 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
 
       // Shared filters (Date, Map Location, RSSI, Vendor, OUI, Modified Status)
       // 5. Date / Day Filter
-      if (filters.dateFilter && filters.dateFilter !== 'ALL') {
+      const activeDates =
+        filters.selectedDates && filters.selectedDates.length > 0
+          ? filters.selectedDates
+          : filters.dateFilter && filters.dateFilter !== 'ALL'
+          ? [filters.dateFilter]
+          : null;
+
+      if (activeDates && activeDates.length > 0) {
         const apDateKey = extractDateKey(ap.firstSeen);
-        const hasDateInObs = apDateKey === filters.dateFilter || ap.observations.some((obs) =>
-          extractDateKey(obs.timestamp) === filters.dateFilter
-        );
+        const inApDate = apDateKey ? activeDates.includes(apDateKey) : false;
+        const hasDateInObs =
+          inApDate ||
+          ap.observations.some((obs) => {
+            const d = extractDateKey(obs.timestamp);
+            return d ? activeDates.includes(d) : false;
+          });
         if (!hasDateInObs) return false;
       }
 
@@ -634,9 +962,15 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
         case 'bestRssi': {
           // Arrow UP ('asc') -> Best signal first (-30 dBm before -100 dBm)
           // Arrow DOWN ('desc') -> Weakest signal first (-100 dBm before -30 dBm)
-          const isDateFiltered = Boolean(filters.dateFilter && filters.dateFilter !== 'ALL');
-          const valA = isDateFiltered ? getDayBestRssi(a, filters.dateFilter) : a.bestRssi;
-          const valB = isDateFiltered ? getDayBestRssi(b, filters.dateFilter) : b.bestRssi;
+          const activeDates =
+            filters.selectedDates && filters.selectedDates.length > 0
+              ? filters.selectedDates
+              : filters.dateFilter && filters.dateFilter !== 'ALL'
+              ? [filters.dateFilter]
+              : null;
+          const isDateFiltered = Boolean(activeDates && activeDates.length > 0);
+          const valA = isDateFiltered ? getDayBestRssi(a, activeDates) : a.bestRssi;
+          const valB = isDateFiltered ? getDayBestRssi(b, activeDates) : b.bestRssi;
           comparison = valB - valA;
           break;
         }
@@ -843,6 +1177,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
         (filters.btTypeFilter !== undefined && filters.btTypeFilter !== 'ALL') ||
         (filters.btCompanyFilter !== undefined && filters.btCompanyFilter !== 'ALL') ||
         Boolean(filters.onlyNamedBtDevices) ||
+        (filters.selectedDates && filters.selectedDates.length > 0) ||
         filters.dateFilter !== 'ALL' ||
         filters.minRssi !== -100 ||
         filters.vendorFilter !== 'ALL' ||
@@ -852,6 +1187,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
       : filters.searchQuery !== '' ||
         filters.securityFilter.length > 0 ||
         filters.channelFilter !== 'ALL' ||
+        (filters.selectedDates && filters.selectedDates.length > 0) ||
         filters.dateFilter !== 'ALL' ||
         filters.wpsFilter !== 'ALL' ||
         filters.minRssi !== -100 ||
@@ -1020,7 +1356,7 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
 
       {/* Primary Filters Panel (Open by default) */}
       {showAdvancedFilters && (
-        <div className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-4 animate-fadeIn">
+        <div className="relative z-30 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-4 animate-fadeIn">
           {analysisMode === 'BT' ? (
             /* Bluetooth Filters Grid */
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
@@ -1082,32 +1418,17 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                 </select>
               </div>
 
-              {/* 3. Date / Day Filter */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5 text-teal-500" />
-                  <span>{language === 'fr' ? 'Filtrer par date\u00A0:' : 'Filter by date:'}</span>
-                </label>
-                <select
-                  value={filters.dateFilter}
-                  onChange={(e) => {
-                    onUpdateFilters((prev) => ({ ...prev, dateFilter: e.target.value }));
-                    setCurrentPage(1);
-                  }}
-                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:border-cyan-500 font-medium font-sans"
-                >
-                  <option value="ALL">
-                    {language === 'fr'
-                      ? `Toutes les dates (${availableDates.length > 0 ? availableDates.length : '1'})`
-                      : `All Dates (${availableDates.length > 0 ? availableDates.length : '1'})`}
-                  </option>
-                  {availableDates.map((date) => (
-                    <option key={date} value={date}>
-                      {formatToEuropeanDate(date)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* 3. Multi-date Filter */}
+              <DateMultiSelectDropdown
+                availableDates={availableDates}
+                dateCounts={dateCounts}
+                selectedDates={filters.selectedDates}
+                dateFilter={filters.dateFilter}
+                onUpdateFilters={onUpdateFilters}
+                onResetPage={() => setCurrentPage(1)}
+                language={language}
+                analysisMode="BT"
+              />
             </div>
           ) : (
             /* WiFi Filters Grid */
@@ -1339,32 +1660,17 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                 </select>
               </div>
 
-              {/* 4. Date / Day Filter */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5 text-teal-500" />
-                  <span>{language === 'fr' ? 'Filtrer par date\u00A0:' : 'Filter by date:'}</span>
-                </label>
-                <select
-                  value={filters.dateFilter}
-                  onChange={(e) => {
-                    onUpdateFilters((prev) => ({ ...prev, dateFilter: e.target.value }));
-                    setCurrentPage(1);
-                  }}
-                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:border-cyan-500 font-medium font-sans"
-                >
-                  <option value="ALL">
-                    {language === 'fr'
-                      ? `Toutes les dates (${availableDates.length > 0 ? availableDates.length : '1'})`
-                      : `All Dates (${availableDates.length > 0 ? availableDates.length : '1'})`}
-                  </option>
-                  {availableDates.map((date) => (
-                    <option key={date} value={date}>
-                      {formatToEuropeanDate(date)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* 4. Multi-date Filter */}
+              <DateMultiSelectDropdown
+                availableDates={availableDates}
+                dateCounts={dateCounts}
+                selectedDates={filters.selectedDates}
+                dateFilter={filters.dateFilter}
+                onUpdateFilters={onUpdateFilters}
+                onResetPage={() => setCurrentPage(1)}
+                language={language}
+                analysisMode="WIFI"
+              />
             </div>
           )}
 
@@ -1954,8 +2260,14 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                         {/* Best RSSI */}
                         <td className="px-1.5 py-2 whitespace-nowrap text-center">
                           {(() => {
-                            const isDateFiltered = Boolean(filters.dateFilter && filters.dateFilter !== 'ALL');
-                            const displayRssi = isDateFiltered ? getDayBestRssi(ap, filters.dateFilter) : ap.bestRssi;
+                            const activeDates =
+                              filters.selectedDates && filters.selectedDates.length > 0
+                                ? filters.selectedDates
+                                : filters.dateFilter && filters.dateFilter !== 'ALL'
+                                ? [filters.dateFilter]
+                                : null;
+                            const isDateFiltered = Boolean(activeDates && activeDates.length > 0);
+                            const displayRssi = isDateFiltered ? getDayBestRssi(ap, activeDates) : ap.bestRssi;
                             const tooltip = isDateFiltered
                               ? (language === 'fr'
                                   ? `Meilleur signal (Toutes journées confondues) : ${ap.bestRssi}\u00A0dBm`
@@ -2431,8 +2743,14 @@ export const NetworkTable: React.FC<NetworkTableProps> = ({
                       {/* Best RSSI */}
                       <td className="px-1.5 py-2 whitespace-nowrap text-center">
                         {(() => {
-                          const isDateFiltered = Boolean(filters.dateFilter && filters.dateFilter !== 'ALL');
-                          const displayRssi = isDateFiltered ? getDayBestRssi(ap, filters.dateFilter) : ap.bestRssi;
+                          const activeDates =
+                            filters.selectedDates && filters.selectedDates.length > 0
+                              ? filters.selectedDates
+                              : filters.dateFilter && filters.dateFilter !== 'ALL'
+                              ? [filters.dateFilter]
+                              : null;
+                          const isDateFiltered = Boolean(activeDates && activeDates.length > 0);
+                          const displayRssi = isDateFiltered ? getDayBestRssi(ap, activeDates) : ap.bestRssi;
                           const tooltip = isDateFiltered
                             ? (language === 'fr'
                                 ? `Meilleur signal (Toutes journées confondues) : ${ap.bestRssi}\u00A0dBm`

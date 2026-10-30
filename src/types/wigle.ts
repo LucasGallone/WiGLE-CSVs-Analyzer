@@ -177,6 +177,7 @@ export interface FilterState {
   channelFilter: string; // 'ALL', 'BAND_2_4', 'BAND_5', 'BAND_6', or specific channel '1', '6', '36', etc.
   bandFilter: string;
   dateFilter: string; // 'ALL' or 'YYYY-MM-DD'
+  selectedDates?: string[]; // Multiple dates selection: ['YYYY-MM-DD', ...] or empty for all dates
   locationFilter: { lat: number; lng: number; key: string; radiusMeters?: number; macs?: string[] } | null;
   wpsFilter: 'ALL' | 'WPS_ONLY' | 'NO_WPS' | 'HIDE_BADGES'; // Option to show/hide WPS / filter WPS
   cipherAlgorithmFilter?: string; // Dynamic cipher algorithm filter (e.g. 'TKIP', 'CCMP', 'GCMP-256')

@@ -15,7 +15,7 @@ import {
   getApSubLabel,
   getApCipherForFilter,
 } from './utils/csvParser';
-import { analyzeNetworkHistory } from './utils/historyUtils';
+import { analyzeNetworkHistory, extractDateKey } from './utils/historyUtils';
 import { isBluetoothAuthMode } from './utils/bluetoothUtils';
 import { loadCustomOuiDatabase } from './data/ouiDatabase';
 import { ThemeProvider } from './context/ThemeContext';
@@ -73,6 +73,7 @@ function AppContent() {
     channelFilter: 'ALL',
     bandFilter: 'ALL',
     dateFilter: 'ALL',
+    selectedDates: [],
     locationFilter: null,
     wpsFilter: 'ALL',
     cipherAlgorithmFilter: 'ALL',
@@ -398,10 +399,23 @@ function AppContent() {
         if (filters.maxRssi < 0 && ap.bestRssi > filters.maxRssi) return false;
 
         // 9. Date / Day filter
-        if (filters.dateFilter && filters.dateFilter !== 'ALL') {
-          const apDate = (ap.firstSeen || '').substring(0, 10);
-          const hasDateInObs = ap.observations.some((obs) => (obs.timestamp || '').startsWith(filters.dateFilter));
-          if (apDate !== filters.dateFilter && !hasDateInObs) return false;
+        const activeDates =
+          filters.selectedDates && filters.selectedDates.length > 0
+            ? filters.selectedDates
+            : filters.dateFilter && filters.dateFilter !== 'ALL'
+            ? [filters.dateFilter]
+            : null;
+
+        if (activeDates && activeDates.length > 0) {
+          const apDate = extractDateKey(ap.firstSeen);
+          const inApDate = apDate ? activeDates.includes(apDate) : false;
+          const hasDateInObs =
+            inApDate ||
+            ap.observations.some((obs) => {
+              const d = extractDateKey(obs.timestamp);
+              return d ? activeDates.includes(d) : false;
+            });
+          if (!hasDateInObs) return false;
         }
 
         // 10. Geographic Location filter
@@ -497,10 +511,23 @@ function AppContent() {
       }
 
       // 5. Date / Day filter
-      if (filters.dateFilter && filters.dateFilter !== 'ALL') {
-        const apDate = (ap.firstSeen || '').substring(0, 10);
-        const hasDateInObs = ap.observations.some((obs) => (obs.timestamp || '').startsWith(filters.dateFilter));
-        if (apDate !== filters.dateFilter && !hasDateInObs) return false;
+      const activeDates =
+        filters.selectedDates && filters.selectedDates.length > 0
+          ? filters.selectedDates
+          : filters.dateFilter && filters.dateFilter !== 'ALL'
+          ? [filters.dateFilter]
+          : null;
+
+      if (activeDates && activeDates.length > 0) {
+        const apDate = extractDateKey(ap.firstSeen);
+        const inApDate = apDate ? activeDates.includes(apDate) : false;
+        const hasDateInObs =
+          inApDate ||
+          ap.observations.some((obs) => {
+            const d = extractDateKey(obs.timestamp);
+            return d ? activeDates.includes(d) : false;
+          });
+        if (!hasDateInObs) return false;
       }
 
       // 6. Geographic Location filter (from map search / point selection)
@@ -568,6 +595,7 @@ function AppContent() {
         filters.maxRssi < 0 ||
         (filters.vendorFilter && filters.vendorFilter !== 'ALL') ||
         (filters.ouiFilter && filters.ouiFilter !== 'ALL') ||
+        (filters.selectedDates && filters.selectedDates.length > 0) ||
         (filters.dateFilter && filters.dateFilter !== 'ALL') ||
         filters.locationFilter !== null
       );
@@ -577,6 +605,7 @@ function AppContent() {
       (filters.searchQuery && filters.searchQuery.trim().length > 0) ||
       (filters.securityFilter && filters.securityFilter.length > 0 && !filters.securityFilter.includes('ALL')) ||
       (filters.channelFilter && filters.channelFilter !== 'ALL') ||
+      (filters.selectedDates && filters.selectedDates.length > 0) ||
       (filters.dateFilter && filters.dateFilter !== 'ALL') ||
       (filters.wpsFilter && filters.wpsFilter !== 'ALL' && filters.wpsFilter !== 'HIDE_BADGES') ||
       filters.minRssi > -100 ||

@@ -229,11 +229,16 @@ export function extractDateKey(timestamp?: string | number | null): string {
 }
 
 /**
- * Returns the best (strongest / maximum) RSSI recorded for an AP on a specific date (YYYY-MM-DD).
- * If no observation matches or dateKey is 'ALL'/empty, returns ap.bestRssi.
+ * Returns the best (strongest / maximum) RSSI recorded for an AP across one or multiple dates (YYYY-MM-DD).
+ * If no observation matches or dateKeys is empty/ALL, returns ap.bestRssi.
  */
-export function getDayBestRssi(ap: ProcessedAccessPoint, dateKey?: string | null): number {
-  if (!dateKey || dateKey === 'ALL') {
+export function getDatesBestRssi(ap: ProcessedAccessPoint, dateKeys?: string[] | string | null): number {
+  if (!dateKeys) return ap.bestRssi;
+  const keys = Array.isArray(dateKeys)
+    ? dateKeys.filter((k) => k && k !== 'ALL')
+    : (dateKeys === 'ALL' || !dateKeys ? [] : [dateKeys]);
+
+  if (keys.length === 0) {
     return ap.bestRssi;
   }
 
@@ -242,7 +247,8 @@ export function getDayBestRssi(ap: ProcessedAccessPoint, dateKey?: string | null
   if (ap.observations && ap.observations.length > 0) {
     for (let i = 0; i < ap.observations.length; i++) {
       const obs = ap.observations[i];
-      if (extractDateKey(obs.timestamp) === dateKey) {
+      const dKey = extractDateKey(obs.timestamp);
+      if (dKey && keys.includes(dKey)) {
         if (typeof obs.rssi === 'number' && !isNaN(obs.rssi) && obs.rssi > dayBest) {
           dayBest = obs.rssi;
         }
@@ -253,13 +259,21 @@ export function getDayBestRssi(ap: ProcessedAccessPoint, dateKey?: string | null
   if (dayBest === -Infinity) {
     const firstDate = extractDateKey(ap.firstSeen);
     const lastDate = extractDateKey(ap.lastSeen);
-    if (firstDate === dateKey || lastDate === dateKey) {
+    if ((firstDate && keys.includes(firstDate)) || (lastDate && keys.includes(lastDate))) {
       return ap.bestRssi;
     }
     return ap.bestRssi;
   }
 
   return dayBest;
+}
+
+/**
+ * Returns the best (strongest / maximum) RSSI recorded for an AP on a specific date (YYYY-MM-DD).
+ * If no observation matches or dateKey is 'ALL'/empty, returns ap.bestRssi.
+ */
+export function getDayBestRssi(ap: ProcessedAccessPoint, dateKey?: string | string[] | null): number {
+  return getDatesBestRssi(ap, dateKey);
 }
 
 /**
